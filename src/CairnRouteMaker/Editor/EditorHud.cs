@@ -11,7 +11,7 @@ internal static class EditorHud
     private const int VisibleRows = 18;
 
     private const string KeyboardHelp =
-        "WASD move   Q/E down/up   Shift fast   Alt slow\n" +
+        "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
         "Hold RMB look   LMB paint   Scroll or [ ] brush size\n" +
         "Tab or 1/2/3 allow/deny/erase   G set start (facing = camera)\n" +
         "Ctrl+Z undo   Ctrl+S save   P play-test   L level select   Esc exit";
@@ -76,7 +76,7 @@ internal static class EditorHud
         var left = Screen.width / 2f - width / 2f;
         var top = Screen.height / 2f - height / 2f;
         var hint = editor.Input.UsingGamepad ? "D-pad choose   A go   B back" : "Arrows choose   Enter or click go   Esc back";
-        GUI.Box(new Rect(left, top, width, height), $"LEVEL SELECT   ({hint})");
+        GUI.Box(new Rect(left, top, width, height), $"{menu.Title}   ({hint})");
 
         // Keep the highlighted entry in view.
         var first = Mathf.Clamp(menu.Selected - VisibleRows / 2, 0, Mathf.Max(0, entries.Count - VisibleRows));

@@ -17,7 +17,11 @@ namespace CairnRouteMaker.Editor;
 internal sealed class EditorInput
 {
     private const float StickDeadzone = 0.15f;
+    /// <summary>Shift / LT: 72 m/s.</summary>
     private const float FastMultiplier = 12f;
+
+    /// <summary>Alt: 24 m/s, a third of fast.</summary>
+    private const float AltMultiplier = 4f;
     private const float StickLookSpeed = 140f;
     private const float MouseLookSensitivity = 0.12f;
 
@@ -102,7 +106,7 @@ internal sealed class EditorInput
             }
 
             if (keyboard.leftShiftKey.isPressed) speed *= FastMultiplier;
-            if (keyboard.leftAltKey.isPressed) speed *= 0.25f;
+            if (keyboard.leftAltKey.isPressed) speed *= AltMultiplier;
 
             if (mouse.rightButton.isPressed)
             {

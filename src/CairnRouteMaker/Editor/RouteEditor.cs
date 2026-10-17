@@ -17,6 +17,7 @@ internal sealed class RouteEditor
     private const float MinRadius = 0.1f;
     private const float MaxRadius = 5f;
     private const float MaxPaintDistance = 300f;
+    /// <summary>Cruising speed in m/s; see EditorInput for the Shift/LT and Alt multipliers.</summary>
     private const float FlySpeed = 6f;
 
     /// <summary>A new stamp is laid once the brush has moved this fraction of its radius.</summary>
@@ -147,7 +148,7 @@ internal sealed class RouteEditor
         Open();
         if (IsOpen)
         {
-            LevelSelect.Open(_storage, _traveler, SetStatus);
+            LevelSelect.Open(_storage, _traveler, SetStatus, OnRouteDeleted);
         }
     }
 
@@ -232,7 +233,7 @@ internal sealed class RouteEditor
         {
             EndStroke();
             _overlay.HideBrush();
-            LevelSelect.Open(_storage, _traveler, SetStatus);
+            LevelSelect.Open(_storage, _traveler, SetStatus, OnRouteDeleted);
             return;
         }
 
@@ -297,15 +298,13 @@ internal sealed class RouteEditor
         {
             EndStroke();
         }
-
-        _overlay.Flush();
     }
 
     private void UpdateLevelSelect()
     {
         if (Input.MenuBack)
         {
-            LevelSelect.Close();
+            LevelSelect.Back();
             return;
         }
 
@@ -322,15 +321,45 @@ internal sealed class RouteEditor
         }
     }
 
-    /// <summary>Close the editor (handing input and camera back) and start the chosen trip.</summary>
+    /// <summary>
+    /// Run the highlighted menu entry. Travel closes the editor first (handing input and camera
+    /// back to the game); other entries just change the menu page.
+    /// </summary>
     private void ChooseLevel()
     {
+        var entry = LevelSelect.Current;
+        if (entry == null)
+        {
+            return;
+        }
+
+        if (!entry.LeavesEditor)
+        {
+            entry.Choose();
+            return;
+        }
+
         Close();
-        LevelSelect.Confirm();
+        entry.Choose();
         if (_traveler.IsActive)
         {
             SetStatus($"Travelling to {_traveler.Destination}...");
         }
+    }
+
+    /// <summary>A route file was deleted from the menu: if it's the one being shown, start fresh.</summary>
+    private void OnRouteDeleted(string zone)
+    {
+        if (Route.ZoneKey != zone)
+        {
+            return;
+        }
+
+        EndStroke();
+        _undo.Clear();
+        Route = new Route { ZoneKey = zone, GameVersion = GameApi.GameVersion };
+        _dirty = false;
+        _overlay.Rebuild(Route);
     }
 
     /// <summary>Called after the game's own updates so our cursor state wins.</summary>

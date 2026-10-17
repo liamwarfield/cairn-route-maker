@@ -37,6 +37,7 @@ public sealed class RouteMakerMod : MelonMod
             HandleHotkeys();
             _editor?.Update();
             _traveler.Update();
+            _overlay?.Flush();
         }
         catch (Exception e)
         {

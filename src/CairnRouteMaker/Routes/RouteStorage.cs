@@ -50,6 +50,26 @@ public sealed class RouteStorage
 
     public Route Load(string zoneKey) => RouteFile.Deserialize(File.ReadAllText(PathFor(zoneKey)));
 
+    /// <summary>
+    /// Remove a zone's route by moving it to a Backups folder next to the routes folder, stamped
+    /// with the time, so a deletion can always be undone by moving the file back.
+    /// </summary>
+    /// <returns>Where the file went, or null if there was no route to delete.</returns>
+    public string Delete(string zoneKey, DateTime now)
+    {
+        var path = PathFor(zoneKey);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var backups = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_directory)) ?? _directory, "Backups");
+        Directory.CreateDirectory(backups);
+        var backup = Path.Combine(backups, $"{Path.GetFileNameWithoutExtension(path)}.{now:yyyyMMdd-HHmmss}.json");
+        File.Move(path, backup, overwrite: true);
+        return backup;
+    }
+
     public string Save(Route route)
     {
         Directory.CreateDirectory(_directory);

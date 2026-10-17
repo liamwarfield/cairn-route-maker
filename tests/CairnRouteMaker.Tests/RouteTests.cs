@@ -122,4 +122,20 @@ public class RouteTests
         Assert.Equal(new[] { "Kami/A", "Tenzing/B" }, routes.ConvertAll(r => r.ZoneKey));
         Directory.Delete(dir, recursive: true);
     }
+
+    [Fact]
+    public void DeleteMovesTheRouteIntoBackups()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var storage = new RouteStorage(Path.Combine(root, "Routes"));
+        storage.Save(new Route { ZoneKey = "Kami/A" });
+
+        var backup = storage.Delete("Kami/A", new System.DateTime(2026, 10, 17, 16, 5, 9));
+
+        Assert.False(storage.Exists("Kami/A"));
+        Assert.Equal(Path.Combine(root, "Backups", "Kami_A.20261017-160509.json"), backup);
+        Assert.Equal("Kami/A", RouteFile.Deserialize(File.ReadAllText(backup)).ZoneKey);
+        Assert.Null(storage.Delete("Kami/A", System.DateTime.Now));
+        Directory.Delete(root, recursive: true);
+    }
 }

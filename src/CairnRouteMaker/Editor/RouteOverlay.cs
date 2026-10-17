@@ -30,7 +30,11 @@ internal sealed class RouteOverlay
         _root = new GameObject("CairnRouteMaker.Overlay");
         Object.DontDestroyOnLoad(_root);
         CreateMaterials();
-        _paint = new DecalPaint(_root.transform);
+        _paint = new DecalPaint(_root.transform)
+        {
+            DrawingFinished = (cells, workMs, wallMs) =>
+                MelonLogger.Msg($"Drew route paint: {cells} decals, {workMs:0} ms of work over {wallMs:0} ms."),
+        };
 
         _start = CreateStartMarker();
         _start.SetActive(false);
@@ -49,9 +53,12 @@ internal sealed class RouteOverlay
 
     public int PaintCellCount => _paint.CellCount;
 
+    /// <summary>
+    /// Show a whole route. The paint is queued and drawn a few milliseconds per frame, so it
+    /// fills in over a moment rather than stalling the game; the log reports the total.
+    /// </summary>
     public void Rebuild(Route route)
     {
-        var timer = System.Diagnostics.Stopwatch.StartNew();
         _paint.Clear();
         _strokeCount = 0;
         foreach (var stroke in route.Strokes)
@@ -59,16 +66,15 @@ internal sealed class RouteOverlay
             BeginStroke();
             foreach (var stamp in stroke.Stamps)
             {
-                AddStamp(stroke.Mode, stamp);
+                _paint.AddLater(_strokeCount - 1, stroke.Mode, stamp);
             }
         }
 
-        _paint.Flush();
+        _paint.ReportWhenDrawn();
         SetStart(route.Start);
-        MelonLogger.Msg($"Drew route: {_paint.CellCount} paint cells in {timer.ElapsedMilliseconds} ms.");
     }
 
-    /// <summary>Push this frame's paint changes to the GPU.</summary>
+    /// <summary>Do this frame's share of queued paint drawing; call every frame.</summary>
     public void Flush() => _paint.Flush();
 
     public void BeginStroke() => _strokeCount++;
@@ -149,7 +155,8 @@ internal sealed class RouteOverlay
     private static Material CreateMaterial(Color color)
     {
         var material = new Material(FindShader()) { color = color, renderQueue = 3000 };
-        Object.DontDestroyOnLoad(material);
+        // Survive the game's asset unloading on zone changes (see DecalPaint.Keep).
+        material.hideFlags |= HideFlags.DontUnloadUnusedAsset;
         return material;
     }
 

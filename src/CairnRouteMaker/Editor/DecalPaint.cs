@@ -14,20 +14,21 @@ namespace CairnRouteMaker.Editor;
 /// Draws the painted route as the game's own deferred decals (TGB/Decal), so the paint is lit
 /// and colour-graded like the rock it sits on.
 ///
-/// Space is cut into axis-aligned cubes. Each cube that paint touches gets a decal per facing
-/// direction (+X, -X, +Y, ...) that paint there faces, each projecting along its own axis with a
-/// texture generated here. The decals use the shader's normals fade, so each one only colours
+/// Space is cut into axis-aligned cubes. The first time paint reaches a cube, rays are cast
+/// through it to find which ways its rock faces, and it gets a decal per facing direction
+/// (+X, -X, +Y, ...), each projecting along its own axis with a texture generated here. The decals use the shader's normals fade, so each one only colours
 /// rock that faces its way: paint wraps over ridges and around corners without smearing, and
 /// since the cubes tile without overlapping, overlapping strokes don't build up. Each texel is
 /// coloured by the same last-stroke-wins rule as <see cref="Route.IsAllowed"/>.
 ///
-/// The texel loops use System.Numerics and MathF only: under IL2CPP every UnityEngine.Vector3
-/// or Mathf call crosses into native code, which made redraws take seconds.
+/// Texture work is queued and done a few milliseconds per frame, so loading a big route never
+/// stalls the game. The texel loops use System.Numerics and MathF only: under IL2CPP every
+/// UnityEngine.Vector3 or Mathf call crosses into native code, which made redraws take seconds.
 /// </summary>
 internal sealed class DecalPaint
 {
-    private const float CellSize = 1f;
-    private const int Resolution = 64;
+    private const float CellSize = 2f;
+    private const int Resolution = 128;
     private const float TexelSize = CellSize / Resolution;
     private const float PaintAlpha = 0.6f;
 
@@ -39,8 +40,15 @@ internal sealed class DecalPaint
     private const float NormalsFadeThreshold = 0.5f;
     private const float NormalsFadeSmoothness = 0.12f;
 
-    /// <summary>A dab is drawn by every direction's decal its normal is within about 70 degrees of.</summary>
-    private const float BucketMinDot = 0.35f;
+    /// <summary>The brush ring only hides on rock facing well away from where it's aimed.</summary>
+    private const float CursorFadeThreshold = 0.15f;
+    private const float CursorFadeSmoothness = 0.1f;
+
+    /// <summary>Rays per side (squared) when surveying which ways a cube's rock faces.</summary>
+    private const int SurveyGrid = 4;
+
+    /// <summary>Texture work allowed per frame before the rest waits for the next one.</summary>
+    private const double FlushBudgetMs = 6.0;
 
     private const int CursorResolution = 256;
 
@@ -79,13 +87,25 @@ internal sealed class DecalPaint
         public float[] Coverage;
         public bool NeedsRedraw;
         public bool NeedsUpload;
+        public bool Queued;
     }
 
     private readonly Transform _parent;
     private readonly Dictionary<(Vector3Int Cube, int Bucket), Cell> _cells = new();
 
-    /// <summary>Cubes with no climbable surface in them: paint there would never be seen.</summary>
-    private readonly HashSet<Vector3Int> _empty = new();
+    /// <summary>
+    /// For each surveyed cube, a bit per entry of <see cref="Axes"/> that some rock in it faces.
+    /// 0 means no climbable surface: paint there would never be seen.
+    /// </summary>
+    private readonly Dictionary<Vector3Int, int> _cubeFacings = new();
+    private readonly Queue<Cell> _pending = new();
+    private readonly System.Diagnostics.Stopwatch _drawTimer = new();
+    private readonly System.Diagnostics.Stopwatch _frameTimer = new();
+    private double _drawWorkMs;
+    private bool _reportWhenDrawn;
+
+    /// <summary>Stamps waiting to be added, in paint order; see <see cref="AddLater"/>.</summary>
+    private readonly Queue<(int StrokeIndex, StrokeMode Mode, Stamp Stamp)> _pendingStamps = new();
     private Material _baseMaterial;
     private GameObject _cursor;
     private TGBDecal _cursorDecal;
@@ -97,6 +117,9 @@ internal sealed class DecalPaint
     public DecalPaint(Transform parent) => _parent = parent;
 
     public int CellCount => _cells.Count;
+
+    /// <summary>Called once queued drawing finishes: cell count, total work ms, wall-clock ms.</summary>
+    public Action<int, double, double> DrawingFinished { get; set; }
 
     /// <summary>
     /// Show the brush as a ring projected onto the surface, drawn by the same decal shader as the
@@ -138,16 +161,19 @@ internal sealed class DecalPaint
             return false;
         }
 
-        var (go, material, texture) = created.Value;
-        Object.Destroy(texture);
-        Object.Destroy(material);
+        var (go, unusedMaterial, unusedTexture) = created.Value;
+        Object.Destroy(unusedTexture);
+        Object.Destroy(unusedMaterial);
         _cursorMaterials = new Material[3];
         foreach (var mode in new[] { StrokeMode.Allow, StrokeMode.Deny, StrokeMode.Erase })
         {
-            var ring = new Texture2D(CursorResolution, CursorResolution, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, name = $"RoutePaint brush {mode}" };
+            var ring = Keep(new Texture2D(CursorResolution, CursorResolution, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, name = $"RoutePaint brush {mode}" });
             ring.SetPixels32(CursorPixels(mode));
             ring.Apply(false);
-            _cursorMaterials[(int)mode] = new Material(_baseMaterial) { name = ring.name, mainTexture = ring };
+            var material = Keep(new Material(_baseMaterial) { name = ring.name, mainTexture = ring });
+            material.SetFloat("_NormalsFadeThreshold", CursorFadeThreshold);
+            material.SetFloat("_NormalsFadeSmoothness", CursorFadeSmoothness);
+            _cursorMaterials[(int)mode] = material;
         }
 
         _cursor = go;
@@ -189,10 +215,39 @@ internal sealed class DecalPaint
         }
 
         _cells.Clear();
-        _empty.Clear();
+        _cubeFacings.Clear();
+        _pending.Clear();
+        _pendingStamps.Clear();
+        _drawTimer.Reset();
+        _drawWorkMs = 0;
     }
 
+    /// <summary>
+    /// Queue a stamp to be added during <see cref="Flush"/>, for bulk loads: surveying new cubes
+    /// casts rays, which is too slow to do for a whole route in one frame.
+    /// </summary>
+    public void AddLater(int strokeIndex, StrokeMode mode, Stamp stamp)
+    {
+        _pendingStamps.Enqueue((strokeIndex, mode, stamp));
+        StartDrawTimer();
+    }
+
+    /// <summary>Log how long drawing took once everything queued so far is done.</summary>
+    public void ReportWhenDrawn() => _reportWhenDrawn = _pendingStamps.Count > 0 || _pending.Count > 0;
+
     public void Add(int strokeIndex, StrokeMode mode, Stamp stamp)
+    {
+        if (_pendingStamps.Count > 0)
+        {
+            // Keep paint order: later strokes must land after earlier ones still waiting.
+            AddLater(strokeIndex, mode, stamp);
+            return;
+        }
+
+        AddNow(strokeIndex, mode, stamp);
+    }
+
+    private void AddNow(int strokeIndex, StrokeMode mode, Stamp stamp)
     {
         var entry = new Entry { StrokeIndex = strokeIndex, Mode = mode, Position = stamp.Position, Radius = stamp.Radius };
         var r = stamp.Radius;
@@ -206,33 +261,33 @@ internal sealed class DecalPaint
         {
             var key = new Vector3Int(x, y, z);
             var center = new NVector3(x + 0.5f, y + 0.5f, z + 0.5f) * CellSize;
-            if (_empty.Contains(key) || !SphereTouchesCube(p, r, center))
+            if (!SphereTouchesCube(p, r, center))
             {
                 continue;
             }
 
+            // Erase reaches every decal in the cube; paint goes where the survey found rock, plus
+            // the dab's own surface (the survey can miss thin features).
+            var facings = mode == StrokeMode.Erase ? (1 << Axes.Length) - 1 : Facings(key, center) | (1 << Dominant(stamp.Normal));
+
             for (var bucket = 0; bucket < Axes.Length; bucket++)
             {
-                Cell cell;
-                if (mode == StrokeMode.Erase)
+                if ((facings & (1 << bucket)) == 0)
                 {
-                    // Erase clears whatever is painted in reach, whichever way it faces.
-                    if (!_cells.TryGetValue((key, bucket), out cell))
-                    {
-                        continue;
-                    }
+                    continue;
                 }
-                else
+
+                // Erase only touches existing paint; paint creates the cube's decal on first use.
+                if (!_cells.TryGetValue((key, bucket), out var cell))
                 {
-                    if (NVector3.Dot(stamp.Normal, Axes[bucket]) < BucketMinDot && Dominant(stamp.Normal) != bucket)
+                    if (mode == StrokeMode.Erase)
                     {
                         continue;
                     }
 
-                    if (!TryGetOrAddCell(key, bucket, center, out cell))
-                    {
-                        break;
-                    }
+                    var (_, right, up) = Orientation(Axes[bucket]);
+                    cell = new Cell { Key = key, Bucket = bucket, Center = center, Axis = Axes[bucket], Right = right, Up = up, NeedsRedraw = true };
+                    _cells.Add((key, bucket), cell);
                 }
 
                 cell.Entries.Add(entry);
@@ -245,42 +300,112 @@ internal sealed class DecalPaint
                 {
                     cell.NeedsRedraw = true;
                 }
+
+                Enqueue(cell);
             }
         }
     }
 
-    private bool TryGetOrAddCell(Vector3Int key, int bucket, NVector3 center, out Cell cell)
+    /// <summary>
+    /// Which ways the rock inside a cube faces, as a bit mask over <see cref="Axes"/>, found once by
+    /// casting a grid of rays into the cube from each side. A direction counts if any surface would
+    /// get colour from that direction's decal at all (dot at or above the fade threshold).
+    /// </summary>
+    private int Facings(Vector3Int key, NVector3 center)
     {
-        if (_cells.TryGetValue((key, bucket), out cell))
+        if (_cubeFacings.TryGetValue(key, out var known))
         {
-            return true;
+            return known;
         }
 
-        // Physics check once per cube: no climbable surface inside means nothing would ever show.
-        var cubeKnown = false;
-        for (var b = 0; b < Axes.Length && !cubeKnown; b++)
+        var mask = 0;
+        var half = CellSize * 0.5f;
+        var unityCenter = RouteOverlay.ToUnity(center);
+        if (Physics.CheckBox(unityCenter, Vector3.one * half, Quaternion.identity, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore))
         {
-            cubeKnown = _cells.ContainsKey((key, b));
+            foreach (var axis in Axes)
+            {
+                // Two directions spanning the face the rays start from.
+                var a = MathF.Abs(axis.X) > 0.5f ? NVector3.UnitY : NVector3.UnitX;
+                var b = NVector3.Cross(axis, a);
+                var direction = RouteOverlay.ToUnity(-axis);
+                for (var i = 0; i < SurveyGrid; i++)
+                for (var j = 0; j < SurveyGrid; j++)
+                {
+                    var u = ((i + 0.5f) / SurveyGrid - 0.5f) * CellSize;
+                    var v = ((j + 0.5f) / SurveyGrid - 0.5f) * CellSize;
+                    var origin = center + axis * (half + 0.01f) + a * u + b * v;
+                    if (!Physics.Raycast(RouteOverlay.ToUnity(origin), direction, out var hit, CellSize + 0.02f, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore))
+                    {
+                        continue;
+                    }
+
+                    var normal = RouteOverlay.ToNumerics(hit.normal);
+                    for (var bucket = 0; bucket < Axes.Length; bucket++)
+                    {
+                        if (NVector3.Dot(normal, Axes[bucket]) >= NormalsFadeThreshold)
+                        {
+                            mask |= 1 << bucket;
+                        }
+                    }
+                }
+            }
         }
 
-        if (!cubeKnown && !Physics.CheckBox(RouteOverlay.ToUnity(center), Vector3.one * (CellSize * 0.5f), Quaternion.identity, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore))
-        {
-            _empty.Add(key);
-            return false;
-        }
-
-        var (_, right, up) = Orientation(Axes[bucket]);
-        cell = new Cell { Key = key, Bucket = bucket, Center = center, Axis = Axes[bucket], Right = right, Up = up, NeedsRedraw = true };
-        _cells.Add((key, bucket), cell);
-        return true;
+        _cubeFacings[key] = mask;
+        return mask;
     }
 
-    /// <summary>Do the deferred texture work; call once per frame and after bulk changes.</summary>
+    private void Enqueue(Cell cell)
+    {
+        if (cell.Queued)
+        {
+            return;
+        }
+
+        cell.Queued = true;
+        _pending.Enqueue(cell);
+        StartDrawTimer();
+    }
+
+    private void StartDrawTimer()
+    {
+        if (!_drawTimer.IsRunning)
+        {
+            _drawTimer.Restart();
+            _drawWorkMs = 0;
+        }
+    }
+
+    /// <summary>
+    /// Do queued texture work for up to a few milliseconds; call every frame. Anything left over
+    /// is picked up next frame, so big routes fill in over a moment instead of freezing the game.
+    /// </summary>
     public void Flush()
     {
-
-        foreach (var cell in _cells.Values)
+        if (_pending.Count == 0 && _pendingStamps.Count == 0)
         {
+            return;
+        }
+
+        _frameTimer.Restart();
+        while (_pendingStamps.Count > 0 && _frameTimer.Elapsed.TotalMilliseconds < FlushBudgetMs)
+        {
+            var (strokeIndex, mode, stamp) = _pendingStamps.Dequeue();
+            AddNow(strokeIndex, mode, stamp);
+        }
+
+        // Textures are only drawn once every stamp is in, so each cell is drawn once, not per stamp.
+        while (_pendingStamps.Count == 0 && _pending.Count > 0 && _frameTimer.Elapsed.TotalMilliseconds < FlushBudgetMs)
+        {
+            var cell = _pending.Dequeue();
+            cell.Queued = false;
+            if (!_cells.ContainsKey((cell.Key, cell.Bucket)))
+            {
+                // Removed (undone) while waiting.
+                continue;
+            }
+
             if (cell.NeedsRedraw)
             {
                 Redraw(cell);
@@ -293,10 +418,34 @@ internal sealed class DecalPaint
                 cell.NeedsUpload = false;
             }
         }
+
+        _drawWorkMs += _frameTimer.Elapsed.TotalMilliseconds;
+        if (_pending.Count == 0 && _pendingStamps.Count == 0 && _drawTimer.IsRunning)
+        {
+            _drawTimer.Stop();
+            if (_reportWhenDrawn)
+            {
+                _reportWhenDrawn = false;
+                DrawingFinished?.Invoke(_cells.Count, _drawWorkMs, _drawTimer.Elapsed.TotalMilliseconds);
+            }
+        }
     }
 
     public void RemoveStroke(int strokeIndex)
     {
+        if (_pendingStamps.Count > 0)
+        {
+            var keep = new List<(int, StrokeMode, Stamp)>(_pendingStamps);
+            _pendingStamps.Clear();
+            foreach (var pending in keep)
+            {
+                if (pending.Item1 != strokeIndex)
+                {
+                    _pendingStamps.Enqueue(pending);
+                }
+            }
+        }
+
         var emptied = new List<(Vector3Int, int)>();
         foreach (var cell in _cells.Values)
         {
@@ -312,6 +461,7 @@ internal sealed class DecalPaint
             }
 
             cell.NeedsRedraw = true;
+            Enqueue(cell);
         }
 
         foreach (var key in emptied)
@@ -319,18 +469,6 @@ internal sealed class DecalPaint
             Destroy(_cells[key]);
             _cells.Remove(key);
         }
-
-        Flush();
-    }
-
-    public void RedrawAll()
-    {
-        foreach (var cell in _cells.Values)
-        {
-            cell.NeedsRedraw = true;
-        }
-
-        Flush();
     }
 
     private void Redraw(Cell cell)
@@ -510,13 +648,13 @@ internal sealed class DecalPaint
             return null;
         }
 
-        var texture = new Texture2D(Resolution, Resolution, TextureFormat.RGBA32, false)
+        var texture = Keep(new Texture2D(Resolution, Resolution, TextureFormat.RGBA32, false)
         {
             wrapMode = TextureWrapMode.Clamp,
             filterMode = FilterMode.Bilinear,
             name = name,
-        };
-        var material = new Material(baseMaterial) { name = name, mainTexture = texture };
+        });
+        var material = Keep(new Material(baseMaterial) { name = name, mainTexture = texture });
 
         var go = new GameObject(name);
         go.SetActive(false);
@@ -549,7 +687,8 @@ internal sealed class DecalPaint
         foreach (var decal in Object.FindObjectsOfType<TGBDecal>(true))
         {
             var material = decal.m_Material;
-            if (decal.layer == TGBDecal.Layer.Enviro0 && material != null && material.shader.name == "TGB/Decal")
+            if (decal.layer == TGBDecal.Layer.Enviro0 && material != null && material.shader.name == "TGB/Decal"
+                && !decal.name.StartsWith("RoutePaint", StringComparison.Ordinal))
             {
                 _template = decal;
                 _baseMaterial = new Material(material);
@@ -597,9 +736,21 @@ internal sealed class DecalPaint
         _baseMaterial.mainTextureOffset = Vector2.zero;
         _baseMaterial.SetVector("_TilingOffset", new Vector4(1f, 1f, 0f, 0f));
         _baseMaterial.name = "RoutePaintBase";
-        Object.DontDestroyOnLoad(_baseMaterial);
+        Keep(_baseMaterial);
         MelonLogger.Msg($"Route paint uses TGB/Decal ({(_template != null ? $"settings from '{_template.name}'" : "default settings")}).");
         return _baseMaterial;
+    }
+
+    /// <summary>
+    /// Protect a runtime asset from Resources.UnloadUnusedAssets, which the game runs on zone
+    /// changes: anything only referenced from mod code counts as unused and gets destroyed
+    /// (DontDestroyOnLoad only covers GameObjects).
+    /// </summary>
+    private static T Keep<T>(T asset)
+        where T : Object
+    {
+        asset.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+        return asset;
     }
 
     private static void Destroy(Cell cell)
