@@ -7,6 +7,9 @@ public enum StrokeMode
 {
     Allow,
     Deny,
+
+    /// <summary>Clears earlier paint back to unpainted (which counts as off-route).</summary>
+    Erase,
 }
 
 /// <summary>One brush dab: a sphere of influence centred on the rock surface.</summary>
@@ -48,7 +51,8 @@ public sealed class Route
     public bool IsEmpty => Start == null && Strokes.Count == 0;
 
     /// <summary>
-    /// Whether a point counts as on-route: the last stroke containing it decides.
+    /// Whether a point counts as on-route: the last stroke containing it decides, and only an
+    /// allow stroke puts it on-route (deny marks it off-route, erase clears it back to unpainted).
     /// Not used for scoring yet; it is here so the rule lives next to the data it interprets.
     /// </summary>
     public bool IsAllowed(Vector3 point)

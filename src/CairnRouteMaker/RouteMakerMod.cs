@@ -17,6 +17,7 @@ public sealed class RouteMakerMod : MelonMod
     private RouteStorage _storage;
     private RouteOverlay _overlay;
     private RouteEditor _editor;
+    private readonly Traveler _traveler = new();
     private string _lastZone;
     private float _nextZoneCheck;
 
@@ -25,7 +26,7 @@ public sealed class RouteMakerMod : MelonMod
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
         LoggerInstance.Msg($"Loaded. Routes are stored in {directory}");
-        LoggerInstance.Msg("F6 route editor, F7 teleport to route start, F9 show/hide route.");
+        LoggerInstance.Msg("F6 (or L3+R3) route editor, F7 teleport to route start, F8 level select, F9 show/hide route.");
     }
 
     public override void OnUpdate()
@@ -35,6 +36,7 @@ public sealed class RouteMakerMod : MelonMod
             LogZoneChanges();
             HandleHotkeys();
             _editor?.Update();
+            _traveler.Update();
         }
         catch (Exception e)
         {
@@ -61,7 +63,7 @@ public sealed class RouteMakerMod : MelonMod
             return;
         }
 
-        if (keyboard.f6Key.wasPressedThisFrame)
+        if (keyboard.f6Key.wasPressedThisFrame || EditorInput.GamepadToggleEditor())
         {
             EnsureEditor();
             if (_editor.IsOpen)
@@ -78,6 +80,18 @@ public sealed class RouteMakerMod : MelonMod
             EnsureEditor();
             _editor.PlayTest();
         }
+        else if (keyboard.f8Key.wasPressedThisFrame)
+        {
+            EnsureEditor();
+            if (_editor.LevelSelect.IsOpen)
+            {
+                _editor.Close();
+            }
+            else
+            {
+                _editor.OpenLevelSelect();
+            }
+        }
         else if (keyboard.f9Key.wasPressedThisFrame && _overlay != null)
         {
             _overlay.Visible = !_overlay.Visible;
@@ -92,7 +106,7 @@ public sealed class RouteMakerMod : MelonMod
     private void EnsureEditor()
     {
         _overlay ??= new RouteOverlay();
-        _editor ??= new RouteEditor(_storage, _overlay);
+        _editor ??= new RouteEditor(_storage, _overlay, _traveler);
     }
 
     private void LogZoneChanges()
@@ -108,6 +122,11 @@ public sealed class RouteMakerMod : MelonMod
         {
             _lastZone = zone;
             LoggerInstance.Msg($"Zone: {zone ?? "(none)"}");
+            if (zone != null && (_editor != null || _storage.Exists(zone)))
+            {
+                EnsureEditor();
+                _editor.OnZoneChanged(zone);
+            }
         }
     }
 }

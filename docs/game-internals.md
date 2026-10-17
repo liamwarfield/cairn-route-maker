@@ -133,3 +133,29 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
 - **Layers:** `TGBDecal.Layer.Enviro0` paints environment surfaces. Other values are `Background = -1`, `Enviro1`, `VFX = 10` and `Wetness = 20`.
 - **IL2CPP performance:** under IL2CPP, every `UnityEngine.Vector3` / `Mathf` call from a mod crosses into native code. Per-texel loops written with them took seconds, so use `System.Numerics` and `MathF` in hot loops.
 - **Collider meshes:** rock `MeshCollider` meshes are not CPU-readable (`isReadable = false`).
+
+## Warping and camera streaming
+
+- **Safe teleport:** `FreeRoamManager.Instance.WarpToPoint(FreeRoamWarpPoint wp, Disk.IOOperationCallback onDone)`. This is the game's map warp. It shows a loading screen, then `WarpRoutine` runs (**xref**):
+  1. Wait for `CairnSceneManager.IsBusy()` to clear.
+  2. `PathRecorder.HaltPath()`.
+  3. Unequip ice tools.
+  4. `TransitionToMode(wp.WarpMode, wp.TeleportDestination, ...)`.
+  5. `RobotPawnController.TeleportNearClimber`.
+  6. Detach and remove the last securing piton from the `Lifeline`.
+  7. `PawnManager.Respawn` when needed.
+  8. `ResumePath()`, then save.
+
+  A bare `TransitionToMode` skips these steps. In testing it sometimes left Ava T-posed and unusable, and it does nothing useful while she's climbing.
+- **Warp points from code:**
+  - A `FreeRoamWarpPoint` on an **inactive** GameObject works as a one-off destination. Its position and rotation come from the transform, and `warpMode` is Walking or Climbing.
+  - Keep the object inactive, otherwise `Awake` registers it in the game's own warp list.
+  - Destroy it in `onDone`.
+- **Camera streaming:**
+  - Zone streaming normally follows Ava (`UpdateStreamingGameplay`), and zones away from her show as `_LOD` scenes.
+  - `StreamingManager.UpdateStreamingCameraEx()` loads the zone under `MainCamera` instead, through `LoadZoneSceneData(zone, false, forCamera: true)` and `CurrentCameraZone`. Nothing in the game calls it any more.
+  - `StopCameraStreaming()` hands streaming back to Ava.
+- **`NORMALSFADE`:**
+  - The shader computes `d = dot(gbufferNormal, normalize(-boxLocalY))`. It discards pixels where `d < _NormalsFadeThreshold`, then fades in over `_NormalsFadeSmoothness` with a smoothstep.
+  - Because the axis is `-boxLocalY`, a decal using the fade needs local **+Y pointing into the surface**. Pointing it outward discards everything.
+  - The UV still comes from local X and Z, so read the u/v world directions back from the box rotation.

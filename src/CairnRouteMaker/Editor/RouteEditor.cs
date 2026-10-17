@@ -4,13 +4,13 @@ using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using MelonLoader;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 namespace CairnRouteMaker.Editor;
 
 /// <summary>
-/// The in-game route editor: a free-flying camera, a brush that paints allow/deny stamps on rock,
-/// and a start marker. While open, the game's own input is blocked and devices are read directly.
+/// The in-game route editor: a free-flying camera, a brush that paints allow/deny/erase stamps
+/// on rock, a start marker, and a level select for jumping around to test. While open, the
+/// game's own input is blocked and devices are read directly (see <see cref="EditorInput"/>).
 /// </summary>
 internal sealed class RouteEditor
 {
@@ -18,7 +18,6 @@ internal sealed class RouteEditor
     private const float MaxRadius = 5f;
     private const float MaxPaintDistance = 300f;
     private const float FlySpeed = 6f;
-    private const float LookSensitivity = 0.12f;
 
     /// <summary>A new stamp is laid once the brush has moved this fraction of its radius.</summary>
     private const float StampSpacing = 0.35f;
@@ -31,6 +30,7 @@ internal sealed class RouteEditor
 
     private readonly RouteStorage _storage;
     private readonly RouteOverlay _overlay;
+    private readonly Traveler _traveler;
     private readonly Stack<(UndoKind Kind, StartPosition PreviousStart)> _undo = new();
 
     private Camera _camera;
@@ -39,13 +39,18 @@ internal sealed class RouteEditor
     private Stroke _stroke;
     private bool _dirty;
     private bool _sawInput;
+    private float _nextStreamUpdate;
     private int _openedFrame;
 
-    public RouteEditor(RouteStorage storage, RouteOverlay overlay)
+    public RouteEditor(RouteStorage storage, RouteOverlay overlay, Traveler traveler)
     {
         _storage = storage;
         _overlay = overlay;
+        _traveler = traveler;
     }
+
+    public EditorInput Input { get; } = new();
+    public LevelSelect LevelSelect { get; } = new();
 
     public bool IsOpen { get; private set; }
     public Route Route { get; private set; } = new();
@@ -70,8 +75,13 @@ internal sealed class RouteEditor
             return;
         }
 
-        if (Route.IsEmpty)
+        if (Route.IsEmpty || Route.ZoneKey != zone)
         {
+            if (_dirty)
+            {
+                Save();
+            }
+
             LoadOrCreate(zone);
         }
 
@@ -106,7 +116,9 @@ internal sealed class RouteEditor
             Save();
         }
 
+        LevelSelect.Close();
         _overlay.HideBrush();
+        GameApi.StopStreamingAroundCamera();
         GameApi.ReleaseCamera();
         GameApi.BlockGameInput(false);
         _camera = null;
@@ -114,7 +126,35 @@ internal sealed class RouteEditor
         IsOpen = false;
     }
 
-    /// <summary>Teleport Ava to the route's start, closing the editor first if it's open.</summary>
+    /// <summary>
+    /// Show the saved route for a zone Ava has just entered. Zones without a saved route keep the
+    /// current one showing, so walking over a zone boundary mid-climb doesn't hide the route.
+    /// </summary>
+    public void OnZoneChanged(string zone)
+    {
+        if (IsOpen || _dirty || zone == null || zone == Route.ZoneKey || !_storage.Exists(zone))
+        {
+            return;
+        }
+
+        LoadOrCreate(zone);
+        SetStatus($"Showing the saved route for {zone}.");
+    }
+
+    /// <summary>Open the editor (if needed) with the level select showing.</summary>
+    public void OpenLevelSelect()
+    {
+        Open();
+        if (IsOpen)
+        {
+            LevelSelect.Open(_storage, _traveler, SetStatus);
+        }
+    }
+
+    /// <summary>
+    /// Put Ava on the route's start, closing the editor first if it's open. If the route belongs
+    /// to another zone, travel there first.
+    /// </summary>
     public void PlayTest()
     {
         Close();
@@ -124,14 +164,26 @@ internal sealed class RouteEditor
             LoadOrCreate(zone);
         }
 
-        if (Route.Start == null)
+        var start = Route.Start;
+        if (start == null)
         {
-            SetStatus("This route has no start position yet (press G in the editor).");
+            SetStatus("This route has no start position yet (G, or Y on a gamepad, in the editor).");
             return;
         }
 
-        var start = Route.Start;
-        if (GameApi.TryTeleportAva(RouteOverlay.ToUnity(start.Position), start.YawDegrees, out var reason))
+        var position = RouteOverlay.ToUnity(start.Position);
+        if (Route.ZoneKey != zone)
+        {
+            var parts = Route.ZoneKey.Split('/', 2);
+            if (parts.Length == 2 && Enum.TryParse<Il2Cpp.StreamingTweakables.World>(parts[0], out var world))
+            {
+                _traveler.Start(world, parts[1], position, start.YawDegrees, SetStatus);
+                SetStatus($"Travelling to {Route.ZoneKey}...");
+                return;
+            }
+        }
+
+        if (GameApi.TryTeleportAva(position, start.YawDegrees, out var reason))
         {
             _overlay.Visible = true;
             SetStatus("Teleported to route start. Climb on!");
@@ -144,93 +196,141 @@ internal sealed class RouteEditor
 
     public void Update()
     {
-        if (!IsOpen)
+        if (!IsOpen || _camera == null)
         {
             return;
         }
 
-        var keyboard = Keyboard.current;
-        var mouse = Mouse.current;
-        if (keyboard == null || mouse == null || _camera == null)
-        {
-            return;
-        }
+        Input.Read(Time.unscaledDeltaTime);
 
-        // Skip the frame the editor opened on, or the F6 press itself would count.
-        if (!_sawInput && Time.frameCount > _openedFrame && (keyboard.anyKey.wasPressedThisFrame || mouse.leftButton.wasPressedThisFrame || mouse.rightButton.wasPressedThisFrame))
+        // Skip the frame the editor opened on, or the key that opened it would count.
+        if (!_sawInput && Time.frameCount > _openedFrame && (Input.Move != Vector3.zero || Input.PaintPressed || Input.Looking))
         {
             _sawInput = true;
-            MelonLogger.Msg("Editor is receiving keyboard/mouse input.");
+            MelonLogger.Msg($"Editor is receiving {(Input.UsingGamepad ? "gamepad" : "keyboard/mouse")} input.");
         }
 
-        var ctrl = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
-        if (keyboard.escapeKey.wasPressedThisFrame)
+        if (LevelSelect.IsOpen)
+        {
+            UpdateLevelSelect();
+            return;
+        }
+
+        if (Input.Close)
         {
             Close();
             return;
         }
 
-        if (keyboard.pKey.wasPressedThisFrame)
+        if (Input.PlayTest)
         {
             PlayTest();
             return;
         }
 
-        if (keyboard.tabKey.wasPressedThisFrame)
+        if (Input.LevelSelect)
         {
-            Mode = Mode == StrokeMode.Allow ? StrokeMode.Deny : StrokeMode.Allow;
+            EndStroke();
+            _overlay.HideBrush();
+            LevelSelect.Open(_storage, _traveler, SetStatus);
+            return;
         }
 
-        if (ctrl && keyboard.zKey.wasPressedThisFrame)
+        if (Input.CycleBrush)
+        {
+            Mode = Mode switch { StrokeMode.Allow => StrokeMode.Deny, StrokeMode.Deny => StrokeMode.Erase, _ => StrokeMode.Allow };
+        }
+
+        if (Input.SelectBrush is { } brush)
+        {
+            Mode = (StrokeMode)brush;
+        }
+
+        if (Input.Undo)
         {
             Undo();
         }
 
-        if (ctrl && keyboard.sKey.wasPressedThisFrame)
+        if (Input.Save)
         {
             Save();
         }
 
-        var scroll = mouse.scroll.ReadValue().y;
-        if (scroll != 0f)
+        Radius = Mathf.Clamp(Radius * Input.BrushScale, MinRadius, MaxRadius);
+        UpdateCamera();
+        if (Time.unscaledTime >= _nextStreamUpdate)
         {
-            Radius = Mathf.Clamp(Radius * (scroll > 0f ? 1.1f : 1f / 1.1f), MinRadius, MaxRadius);
+            // Load full-detail scenery where the camera is, not just around Ava.
+            _nextStreamUpdate = Time.unscaledTime + 0.5f;
+            GameApi.StreamAroundCamera();
         }
 
-        UpdateCamera(keyboard, mouse, ctrl);
-
-        var ray = _camera.ScreenPointToRay(mouse.position.ReadValue());
+        // With a gamepad there's no cursor, so the brush aims at the middle of the screen.
+        var aim = Input.UsingGamepad ? new Vector2(Screen.width * 0.5f, Screen.height * 0.5f) : Input.PointerPosition;
+        var ray = _camera.ScreenPointToRay(new Vector3(aim.x, aim.y, 0f));
         HasBrushTarget = Physics.Raycast(ray, out var hit, MaxPaintDistance, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore);
         if (HasBrushTarget && !Looking)
         {
-            _overlay.ShowBrush(hit.point, Radius, Mode);
+            _overlay.ShowBrush(hit.point, hit.normal, Radius, Mode);
         }
         else
         {
             _overlay.HideBrush();
         }
 
-        if (keyboard.gKey.wasPressedThisFrame && HasBrushTarget)
+        if (Input.SetStart && HasBrushTarget)
         {
             SetStart(hit.point);
         }
 
-        if (mouse.leftButton.wasPressedThisFrame && !Looking)
+        if (Input.PaintPressed)
         {
             BeginStroke();
         }
 
-        if (_stroke != null && mouse.leftButton.isPressed && HasBrushTarget)
+        if (_stroke != null && Input.PaintHeld && HasBrushTarget)
         {
             Paint(hit.point, hit.normal);
         }
 
-        if (mouse.leftButton.wasReleasedThisFrame)
+        if (Input.PaintReleased)
         {
             EndStroke();
         }
 
         _overlay.Flush();
+    }
+
+    private void UpdateLevelSelect()
+    {
+        if (Input.MenuBack)
+        {
+            LevelSelect.Close();
+            return;
+        }
+
+        LevelSelect.Move(Input.MenuMove);
+        if (LevelSelect.ClickedIndex is { } clicked)
+        {
+            LevelSelect.Select(clicked);
+            LevelSelect.ClickedIndex = null;
+            ChooseLevel();
+        }
+        else if (Input.MenuConfirm)
+        {
+            ChooseLevel();
+        }
+    }
+
+    /// <summary>Close the editor (handing input and camera back) and start the chosen trip.</summary>
+    private void ChooseLevel()
+    {
+        Close();
+        LevelSelect.Confirm();
+        if (_traveler.IsActive)
+        {
+            SetStatus($"Travelling to {_traveler.Destination}...");
+        }
     }
 
     /// <summary>Called after the game's own updates so our cursor state wins.</summary>
@@ -241,36 +341,24 @@ internal sealed class RouteEditor
             return;
         }
 
+        var hideCursor = Looking || (Input.UsingGamepad && !LevelSelect.IsOpen);
         Cursor.lockState = Looking ? CursorLockMode.Locked : CursorLockMode.None;
-        Cursor.visible = !Looking;
+        Cursor.visible = !hideCursor;
     }
 
-    private void UpdateCamera(Keyboard keyboard, Mouse mouse, bool ctrl)
+    private void UpdateCamera()
     {
-        var dt = Time.unscaledDeltaTime;
-        Looking = mouse.rightButton.isPressed;
-        if (Looking)
-        {
-            var delta = mouse.delta.ReadValue();
-            _yaw += delta.x * LookSensitivity;
-            _pitch = Mathf.Clamp(_pitch - delta.y * LookSensitivity, -89f, 89f);
-        }
+        Looking = Input.Looking;
+        var look = Input.LookDegrees;
+        _yaw += look.x;
+        _pitch = Mathf.Clamp(_pitch - look.y, -89f, 89f);
 
         var rotation = Quaternion.Euler(_pitch, _yaw, 0f);
-        var move = Vector3.zero;
-        if (!ctrl)
-        {
-            if (keyboard.wKey.isPressed) move += rotation * Vector3.forward;
-            if (keyboard.sKey.isPressed) move += rotation * Vector3.back;
-            if (keyboard.dKey.isPressed) move += rotation * Vector3.right;
-            if (keyboard.aKey.isPressed) move += rotation * Vector3.left;
-            if (keyboard.eKey.isPressed) move += Vector3.up;
-            if (keyboard.qKey.isPressed) move += Vector3.down;
-        }
-
-        var speed = FlySpeed * (keyboard.leftShiftKey.isPressed ? 4f : 1f) * (keyboard.leftAltKey.isPressed ? 0.25f : 1f);
+        var input = Input.Move;
+        var move = rotation * new Vector3(input.x, 0f, input.z) + Vector3.up * input.y;
+        var speed = FlySpeed * Input.MoveSpeedScale;
         var transform = _camera.transform;
-        transform.SetPositionAndRotation(transform.position + move * (speed * dt), rotation);
+        transform.SetPositionAndRotation(transform.position + move * (speed * Time.unscaledDeltaTime), rotation);
     }
 
     private void BeginStroke()

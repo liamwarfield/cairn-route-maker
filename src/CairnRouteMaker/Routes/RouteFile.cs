@@ -13,7 +13,8 @@ namespace CairnRouteMaker.Routes;
 /// </summary>
 public static class RouteFile
 {
-    public const int FormatVersion = 1;
+    /// <summary>2 added erase strokes; version 1 files read unchanged.</summary>
+    public const int FormatVersion = 2;
 
     private static readonly JsonSerializerOptions Options = new()
     {

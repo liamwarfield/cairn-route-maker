@@ -16,18 +16,13 @@ internal sealed class RouteOverlay
 {
     private const int IgnoreRaycastLayer = 2;
 
-    private static readonly Color AllowColor = new(1f, 0.82f, 0.15f, 0.35f);
-    private static readonly Color DenyColor = new(0.95f, 0.15f, 0.1f, 0.45f);
     private static readonly Color StartColor = new(0.2f, 0.9f, 0.4f, 0.6f);
 
     private readonly GameObject _root;
     private readonly DecalPaint _paint;
     private int _strokeCount;
     private readonly GameObject _start;
-    private readonly GameObject _brush;
     private Material _startMaterial;
-    private Material _brushAllow;
-    private Material _brushDeny;
     private bool _visible = true;
 
     public RouteOverlay()
@@ -40,8 +35,6 @@ internal sealed class RouteOverlay
         _start = CreateStartMarker();
         _start.SetActive(false);
 
-        _brush = CreatePrimitive(PrimitiveType.Sphere, _brushAllow, "Brush");
-        _brush.SetActive(false);
     }
 
     public bool Visible
@@ -105,15 +98,9 @@ internal sealed class RouteOverlay
         _start.transform.rotation = Quaternion.Euler(0f, start.YawDegrees, 0f);
     }
 
-    public void ShowBrush(Vector3 position, float radius, StrokeMode mode)
-    {
-        _brush.SetActive(true);
-        _brush.transform.position = position;
-        _brush.transform.localScale = Vector3.one * radius * 2f;
-        _brush.GetComponent<Renderer>().sharedMaterial = mode == StrokeMode.Allow ? _brushAllow : _brushDeny;
-    }
+    public void ShowBrush(Vector3 position, Vector3 normal, float radius, StrokeMode mode) => _paint.ShowCursor(position, normal, radius, mode);
 
-    public void HideBrush() => _brush.SetActive(false);
+    public void HideBrush() => _paint.HideCursor();
 
     public static Vector3 ToUnity(NVector3 v) => new(v.X, v.Y, v.Z);
 
@@ -155,8 +142,6 @@ internal sealed class RouteOverlay
     private void CreateMaterials()
     {
         _startMaterial = CreateMaterial(StartColor);
-        _brushAllow = CreateMaterial(new Color(AllowColor.r, AllowColor.g, AllowColor.b, 0.15f));
-        _brushDeny = CreateMaterial(new Color(DenyColor.r, DenyColor.g, DenyColor.b, 0.15f));
     }
 
     private static Shader _shader;

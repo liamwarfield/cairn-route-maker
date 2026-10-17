@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -20,6 +22,31 @@ public sealed class RouteStorage
     }
 
     public bool Exists(string zoneKey) => File.Exists(PathFor(zoneKey));
+
+    /// <summary>Every readable saved route, ordered by zone; unreadable files are skipped.</summary>
+    public List<Route> LoadAll()
+    {
+        var routes = new List<Route>();
+        if (!Directory.Exists(_directory))
+        {
+            return routes;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(_directory, "*.json"))
+        {
+            try
+            {
+                routes.Add(RouteFile.Deserialize(File.ReadAllText(file)));
+            }
+            catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException)
+            {
+                // A broken or newer file shouldn't hide the others.
+            }
+        }
+
+        routes.Sort((a, b) => string.CompareOrdinal(a.ZoneKey, b.ZoneKey));
+        return routes;
+    }
 
     public Route Load(string zoneKey) => RouteFile.Deserialize(File.ReadAllText(PathFor(zoneKey)));
 
