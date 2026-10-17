@@ -40,17 +40,11 @@ internal sealed class DecalPaint
     private const float NormalsFadeThreshold = 0.5f;
     private const float NormalsFadeSmoothness = 0.12f;
 
-    /// <summary>The brush ring only hides on rock facing well away from where it's aimed.</summary>
-    private const float CursorFadeThreshold = 0.15f;
-    private const float CursorFadeSmoothness = 0.1f;
-
     /// <summary>Rays per side (squared) when surveying which ways a cube's rock faces.</summary>
     private const int SurveyGrid = 4;
 
     /// <summary>Texture work allowed per frame before the rest waits for the next one.</summary>
     private const double FlushBudgetMs = 6.0;
-
-    private const int CursorResolution = 256;
 
     private static readonly NVector3[] Axes =
     {
@@ -107,10 +101,6 @@ internal sealed class DecalPaint
     /// <summary>Stamps waiting to be added, in paint order; see <see cref="AddLater"/>.</summary>
     private readonly Queue<(int StrokeIndex, StrokeMode Mode, Stamp Stamp)> _pendingStamps = new();
     private Material _baseMaterial;
-    private GameObject _cursor;
-    private TGBDecal _cursorDecal;
-    private Material[] _cursorMaterials;
-    private StrokeMode _cursorMode = (StrokeMode)(-1);
     private TGBDecal _template;
     private bool _warned;
 
@@ -120,92 +110,6 @@ internal sealed class DecalPaint
 
     /// <summary>Called once queued drawing finishes: cell count, total work ms, wall-clock ms.</summary>
     public Action<int, double, double> DrawingFinished { get; set; }
-
-    /// <summary>
-    /// Show the brush as a ring projected onto the surface, drawn by the same decal shader as the
-    /// paint so its colour matches what it will paint (a lit, colour-graded preview). Erase is black.
-    /// </summary>
-    public void ShowCursor(Vector3 point, Vector3 normal, float radius, StrokeMode mode)
-    {
-        if (_cursor == null && !CreateCursor())
-        {
-            return;
-        }
-
-        if (mode != _cursorMode)
-        {
-            _cursorDecal.m_Material = _cursorMaterials[(int)mode];
-            _cursorMode = mode;
-        }
-
-        var (rotation, _, _) = Orientation(RouteOverlay.ToNumerics(normal));
-        _cursor.transform.SetPositionAndRotation(point, rotation);
-        // Deep enough to reach into bumps and hollows, but not through to the far side of a ridge.
-        _cursor.transform.localScale = new Vector3(radius * 2f, Mathf.Max(0.3f, radius), radius * 2f);
-        _cursor.SetActive(true);
-    }
-
-    public void HideCursor()
-    {
-        if (_cursor != null)
-        {
-            _cursor.SetActive(false);
-        }
-    }
-
-    private bool CreateCursor()
-    {
-        var created = CreateDecal("RoutePaint brush", 1f);
-        if (created == null)
-        {
-            return false;
-        }
-
-        var (go, unusedMaterial, unusedTexture) = created.Value;
-        Object.Destroy(unusedTexture);
-        Object.Destroy(unusedMaterial);
-        _cursorMaterials = new Material[3];
-        foreach (var mode in new[] { StrokeMode.Allow, StrokeMode.Deny, StrokeMode.Erase })
-        {
-            var ring = Keep(new Texture2D(CursorResolution, CursorResolution, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, name = $"RoutePaint brush {mode}" });
-            ring.SetPixels32(CursorPixels(mode));
-            ring.Apply(false);
-            var material = Keep(new Material(_baseMaterial) { name = ring.name, mainTexture = ring });
-            material.SetFloat("_NormalsFadeThreshold", CursorFadeThreshold);
-            material.SetFloat("_NormalsFadeSmoothness", CursorFadeSmoothness);
-            _cursorMaterials[(int)mode] = material;
-        }
-
-        _cursor = go;
-        _cursorDecal = go.GetComponent<TGBDecal>();
-        return true;
-    }
-
-    /// <summary>
-    /// A ring at the brush edge with a light fill, in the brush's paint colour (black for erase).
-    /// Edges are anti-aliased so the ring stays smooth when the brush is large.
-    /// </summary>
-    private static Color32[] CursorPixels(StrokeMode mode)
-    {
-        const float ringInner = 0.88f;
-        const float pixel = 2f / CursorResolution;
-        var color = mode switch { StrokeMode.Allow => AllowColor, StrokeMode.Deny => DenyColor, _ => new Color32(0, 0, 0, 255) };
-        var fill = mode == StrokeMode.Erase ? 0.3f : 0.16f;
-        var pixels = new Color32[CursorResolution * CursorResolution];
-        for (var j = 0; j < CursorResolution; j++)
-        for (var i = 0; i < CursorResolution; i++)
-        {
-            var dx = (i + 0.5f) / CursorResolution * 2f - 1f;
-            var dy = (j + 0.5f) / CursorResolution * 2f - 1f;
-            var r = MathF.Sqrt(dx * dx + dy * dy);
-            var outside = Math.Clamp((r - 1f) / pixel + 0.5f, 0f, 1f);
-            var inRing = Math.Clamp((r - ringInner) / pixel + 0.5f, 0f, 1f);
-            var alpha = (1f - outside) * (fill + (0.92f - fill) * inRing);
-            pixels[j * CursorResolution + i] = new Color32(color.r, color.g, color.b, (byte)(alpha * 255f));
-        }
-
-        return pixels;
-    }
 
     public void Clear()
     {

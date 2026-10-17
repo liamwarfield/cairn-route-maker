@@ -272,7 +272,7 @@ internal sealed class RouteEditor
         HasBrushTarget = Physics.Raycast(ray, out var hit, MaxPaintDistance, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore);
         if (HasBrushTarget && !Looking)
         {
-            _overlay.ShowBrush(hit.point, hit.normal, Radius, Mode);
+            _overlay.ShowBrush(hit.point, Radius, Mode);
         }
         else
         {

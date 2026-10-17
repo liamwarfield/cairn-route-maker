@@ -18,11 +18,19 @@ internal sealed class RouteOverlay
 
     private static readonly Color StartColor = new(0.2f, 0.9f, 0.4f, 0.6f);
 
+    // Strong enough to read through the game's colour grading; erase is black so it can't be
+    // mistaken for deny.
+    private static readonly Color BrushAllowColor = new(1f, 0.82f, 0.15f, 0.4f);
+    private static readonly Color BrushDenyColor = new(0.95f, 0.1f, 0.05f, 0.45f);
+    private static readonly Color BrushEraseColor = new(0f, 0f, 0f, 0.55f);
+
     private readonly GameObject _root;
     private readonly DecalPaint _paint;
     private int _strokeCount;
     private readonly GameObject _start;
+    private readonly GameObject _brush;
     private Material _startMaterial;
+    private Material[] _brushMaterials;
     private bool _visible = true;
 
     public RouteOverlay()
@@ -39,6 +47,8 @@ internal sealed class RouteOverlay
         _start = CreateStartMarker();
         _start.SetActive(false);
 
+        _brush = CreatePrimitive(PrimitiveType.Sphere, _brushMaterials[0], "Brush");
+        _brush.SetActive(false);
     }
 
     public bool Visible
@@ -104,9 +114,16 @@ internal sealed class RouteOverlay
         _start.transform.rotation = Quaternion.Euler(0f, start.YawDegrees, 0f);
     }
 
-    public void ShowBrush(Vector3 position, Vector3 normal, float radius, StrokeMode mode) => _paint.ShowCursor(position, normal, radius, mode);
+    /// <summary>A translucent sphere the size of the brush, tinted by mode.</summary>
+    public void ShowBrush(Vector3 position, float radius, StrokeMode mode)
+    {
+        _brush.SetActive(true);
+        _brush.transform.position = position;
+        _brush.transform.localScale = Vector3.one * radius * 2f;
+        _brush.GetComponent<Renderer>().sharedMaterial = _brushMaterials[(int)mode];
+    }
 
-    public void HideBrush() => _paint.HideCursor();
+    public void HideBrush() => _brush.SetActive(false);
 
     public static Vector3 ToUnity(NVector3 v) => new(v.X, v.Y, v.Z);
 
@@ -148,6 +165,7 @@ internal sealed class RouteOverlay
     private void CreateMaterials()
     {
         _startMaterial = CreateMaterial(StartColor);
+        _brushMaterials = new[] { CreateMaterial(BrushAllowColor), CreateMaterial(BrushDenyColor), CreateMaterial(BrushEraseColor) };
     }
 
     private static Shader _shader;
