@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- Override with -p:CairnDir=... or a CAIRN_DIR environment variable. -->
+    <CairnDir Condition="'$(CairnDir)' == '' and '$(CAIRN_DIR)' != ''">$(CAIRN_DIR)</CairnDir>
+    <CairnDir Condition="'$(CairnDir)' == ''">$(HOME)/.local/share/Steam/steamapps/common/Cairn</CairnDir>
+    <MelonLoaderDir>$(CairnDir)/MelonLoader</MelonLoaderDir>
+  </PropertyGroup>
+</Project>

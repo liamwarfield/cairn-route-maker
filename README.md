@@ -2,4 +2,4 @@
 
 # cairn-route-maker
 
-Created in [T3 Code](https://t3.codes).
+I'd like to make a mod for the game *Cairn* by The Game Bakers.

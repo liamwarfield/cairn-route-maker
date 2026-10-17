@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>CairnRouteMaker</AssemblyName>
+    <RootNamespace>CairnRouteMaker</RootNamespace>
+    <Version>0.1.0</Version>
+    <!-- net6.0 is what MelonLoader's IL2CPP runtime hosts; silence the SDK's EOL warning. -->
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="$(MelonLoaderDir)/net6/MelonLoader.dll" Private="false" />
+    <Reference Include="$(MelonLoaderDir)/net6/0Harmony.dll" Private="false" />
+    <Reference Include="$(MelonLoaderDir)/net6/Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(MelonLoaderDir)/net6/Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(MelonLoaderDir)/Il2CppAssemblies/*.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CheckGameAssemblies" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(MelonLoaderDir)/Il2CppAssemblies/Assembly-CSharp.dll')"
+           Text="Cairn IL2CPP assemblies not found under '$(MelonLoaderDir)'. Install MelonLoader, launch the game once, or set CairnDir." />
+  </Target>
+
+  <Target Name="DeployToMods" AfterTargets="Build" Condition="'$(DeployToGame)' != 'false'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(CairnDir)/Mods" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) to $(CairnDir)/Mods" />
+  </Target>
+
+</Project>

@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{17F573CE-83FD-47E6-B729-A4E140A41311}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CairnRouteMaker", "src\CairnRouteMaker\CairnRouteMaker.csproj", "{CA6C2551-AC74-4E24-BF4A-37E8611D2F52}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3BA8D03F-554D-400E-815D-38C3480F11EE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CairnRouteMaker.Tests", "tests\CairnRouteMaker.Tests\CairnRouteMaker.Tests.csproj", "{F76E6479-D66D-482D-85BC-E8E743E92D3A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{CA6C2551-AC74-4E24-BF4A-37E8611D2F52}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CA6C2551-AC74-4E24-BF4A-37E8611D2F52}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CA6C2551-AC74-4E24-BF4A-37E8611D2F52}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CA6C2551-AC74-4E24-BF4A-37E8611D2F52}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F76E6479-D66D-482D-85BC-E8E743E92D3A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F76E6479-D66D-482D-85BC-E8E743E92D3A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F76E6479-D66D-482D-85BC-E8E743E92D3A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F76E6479-D66D-482D-85BC-E8E743E92D3A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{CA6C2551-AC74-4E24-BF4A-37E8611D2F52} = {17F573CE-83FD-47E6-B729-A4E140A41311}
+		{F76E6479-D66D-482D-85BC-E8E743E92D3A} = {3BA8D03F-554D-400E-815D-38C3480F11EE}
+	EndGlobalSection
+EndGlobal
