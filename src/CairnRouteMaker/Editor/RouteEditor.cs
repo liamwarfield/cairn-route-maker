@@ -9,7 +9,7 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// The in-game route editor: a free-flying camera, a brush that paints allow/deny/erase stamps
-/// on rock, a start marker, and a level select for jumping around to test. While open, the
+/// on rock, start and finish markers, and a level select for jumping around to test. While open, the
 /// game's own input is blocked and devices are read directly (see <see cref="EditorInput"/>).
 /// </summary>
 internal sealed class RouteEditor
@@ -20,6 +20,9 @@ internal sealed class RouteEditor
     /// <summary>Cruising speed in m/s; see EditorInput for the Shift/LT and Alt multipliers.</summary>
     private const float FlySpeed = 6f;
 
+    /// <summary>The finish takes the brush's size, but no smaller than this, so Ava can't miss it.</summary>
+    private const float MinFinishRadius = 1f;
+
     /// <summary>A new stamp is laid once the brush has moved this fraction of its radius.</summary>
     private const float StampSpacing = 0.35f;
 
@@ -27,12 +30,13 @@ internal sealed class RouteEditor
     {
         Stroke,
         Start,
+        Finish,
     }
 
     private readonly RouteStorage _storage;
     private readonly RouteOverlay _overlay;
     private readonly Traveler _traveler;
-    private readonly Stack<(UndoKind Kind, StartPosition PreviousStart)> _undo = new();
+    private readonly Stack<(UndoKind Kind, StartPosition PreviousStart, FinishZone PreviousFinish)> _undo = new();
 
     private Camera _camera;
     private float _yaw;
@@ -284,6 +288,11 @@ internal sealed class RouteEditor
             SetStart(hit.point);
         }
 
+        if (Input.SetFinish && HasBrushTarget)
+        {
+            SetFinish(hit.point);
+        }
+
         if (Input.PaintPressed)
         {
             BeginStroke();
@@ -411,7 +420,7 @@ internal sealed class RouteEditor
         if (_stroke.Stamps.Count == 0)
         {
             Route.Strokes.Add(_stroke);
-            _undo.Push((UndoKind.Stroke, null));
+            _undo.Push((UndoKind.Stroke, null, null));
         }
 
         var stamp = new Stamp(position, RouteOverlay.ToNumerics(normal), Radius);
@@ -433,11 +442,20 @@ internal sealed class RouteEditor
 
     private void SetStart(Vector3 point)
     {
-        _undo.Push((UndoKind.Start, Route.Start));
+        _undo.Push((UndoKind.Start, Route.Start, null));
         Route.Start = new StartPosition { Position = RouteOverlay.ToNumerics(point), YawDegrees = _yaw };
         _overlay.SetStart(Route.Start);
         _dirty = true;
         SetStatus("Start position set.");
+    }
+
+    private void SetFinish(Vector3 point)
+    {
+        _undo.Push((UndoKind.Finish, null, Route.Finish));
+        Route.Finish = new FinishZone { Position = RouteOverlay.ToNumerics(point), Radius = Mathf.Max(Radius, MinFinishRadius) };
+        _overlay.SetFinish(Route.Finish);
+        _dirty = true;
+        SetStatus($"Finish set ({Route.Finish.Radius:0.0} m radius).");
     }
 
     private void Undo()
@@ -449,16 +467,21 @@ internal sealed class RouteEditor
             return;
         }
 
-        var (kind, previousStart) = _undo.Pop();
-        if (kind == UndoKind.Stroke)
+        var (kind, previousStart, previousFinish) = _undo.Pop();
+        switch (kind)
         {
-            Route.Strokes.RemoveAt(Route.Strokes.Count - 1);
-            _overlay.RemoveLastStroke();
-        }
-        else
-        {
-            Route.Start = previousStart;
-            _overlay.SetStart(previousStart);
+            case UndoKind.Stroke:
+                Route.Strokes.RemoveAt(Route.Strokes.Count - 1);
+                _overlay.RemoveLastStroke();
+                break;
+            case UndoKind.Start:
+                Route.Start = previousStart;
+                _overlay.SetStart(previousStart);
+                break;
+            case UndoKind.Finish:
+                Route.Finish = previousFinish;
+                _overlay.SetFinish(previousFinish);
+                break;
         }
 
         _dirty = true;

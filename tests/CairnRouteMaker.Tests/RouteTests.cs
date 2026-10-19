@@ -68,6 +68,7 @@ public class RouteTests
             ZoneKey = "Kami/Zone_A",
             GameVersion = "1.2.3",
             Start = new StartPosition { Position = new Vector3(1, 2, 3), YawDegrees = 90f },
+            Finish = new FinishZone { Position = new Vector3(1, 12, 3), Radius = 1.5f },
         };
         route.Strokes.Add(StrokeAt(StrokeMode.Allow, new Vector3(4, 5, 6), 0.75f));
         route.Strokes.Add(StrokeAt(StrokeMode.Deny, new Vector3(7, 8, 9), 0.25f));
@@ -81,6 +82,8 @@ public class RouteTests
         Assert.Equal(route.ZoneKey, copy.ZoneKey);
         Assert.Equal(route.Start.Position, copy.Start.Position);
         Assert.Equal(90f, copy.Start.YawDegrees);
+        Assert.Equal(route.Finish.Position, copy.Finish.Position);
+        Assert.Equal(1.5f, copy.Finish.Radius);
         Assert.Equal(3, copy.Strokes.Count);
         Assert.Equal(StrokeMode.Deny, copy.Strokes[1].Mode);
         Assert.Equal(StrokeMode.Erase, copy.Strokes[2].Mode);

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using CairnRouteMaker.Climbing;
 using CairnRouteMaker.Editor;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
@@ -18,6 +19,7 @@ public sealed class RouteMakerMod : MelonMod
     private RouteOverlay _overlay;
     private RouteEditor _editor;
     private readonly Traveler _traveler = new();
+    private readonly AttemptTracker _attempt = new();
     private string _lastZone;
     private float _nextZoneCheck;
 
@@ -37,6 +39,7 @@ public sealed class RouteMakerMod : MelonMod
             HandleHotkeys();
             _editor?.Update();
             _traveler.Update();
+            UpdateAttempt();
             _overlay?.Flush();
         }
         catch (Exception e)
@@ -54,6 +57,23 @@ public sealed class RouteMakerMod : MelonMod
         {
             EditorHud.Draw(_editor);
         }
+
+        if (_editor is { IsOpen: false })
+        {
+            AttemptHud.Draw(_attempt);
+        }
+    }
+
+    /// <summary>Time climbs of the route on show; editing it calls off any attempt in progress.</summary>
+    private void UpdateAttempt()
+    {
+        if (_editor == null || _editor.IsOpen)
+        {
+            _attempt.Reset();
+            return;
+        }
+
+        _attempt.Update(_editor.Route);
     }
 
     private void HandleHotkeys()

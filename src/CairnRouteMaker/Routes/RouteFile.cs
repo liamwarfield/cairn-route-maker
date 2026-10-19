@@ -13,8 +13,8 @@ namespace CairnRouteMaker.Routes;
 /// </summary>
 public static class RouteFile
 {
-    /// <summary>2 added erase strokes; version 1 files read unchanged.</summary>
-    public const int FormatVersion = 2;
+    /// <summary>2 added erase strokes, 3 the finish; older files read unchanged.</summary>
+    public const int FormatVersion = 3;
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -35,6 +35,9 @@ public static class RouteFile
             Start = route.Start == null
                 ? null
                 : new StartDto { Position = ToArray(route.Start.Position), Yaw = route.Start.YawDegrees },
+            Finish = route.Finish == null
+                ? null
+                : new FinishDto { Position = ToArray(route.Finish.Position), Radius = route.Finish.Radius },
             Strokes = route.Strokes
                 .Select(stroke => new StrokeDto
                 {
@@ -74,6 +77,11 @@ public static class RouteFile
             route.Start = new StartPosition { Position = FromArray(dto.Start.Position), YawDegrees = dto.Start.Yaw };
         }
 
+        if (dto.Finish != null)
+        {
+            route.Finish = new FinishZone { Position = FromArray(dto.Finish.Position), Radius = dto.Finish.Radius };
+        }
+
         foreach (var strokeDto in dto.Strokes ?? Array.Empty<StrokeDto>())
         {
             var stroke = new Stroke(strokeDto.Mode);
@@ -107,6 +115,7 @@ public static class RouteFile
         public string ZoneKey { get; set; }
         public string GameVersion { get; set; }
         public StartDto Start { get; set; }
+        public FinishDto Finish { get; set; }
         public StrokeDto[] Strokes { get; set; }
     }
 
@@ -114,6 +123,12 @@ public static class RouteFile
     {
         public float[] Position { get; set; }
         public float Yaw { get; set; }
+    }
+
+    private sealed class FinishDto
+    {
+        public float[] Position { get; set; }
+        public float Radius { get; set; }
     }
 
     private sealed class StrokeDto
