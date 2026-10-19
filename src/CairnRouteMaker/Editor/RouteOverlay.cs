@@ -9,7 +9,7 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// Draws a route in the world: the painted strokes (as decals, see <see cref="DecalPaint"/>),
-/// the start marker and the brush preview. Nothing here has a collider, so neither the brush
+/// the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
 /// nor Ava's grab checks can hit it.
 /// </summary>
 internal sealed class RouteOverlay
@@ -17,6 +17,7 @@ internal sealed class RouteOverlay
     private const int IgnoreRaycastLayer = 2;
 
     private static readonly Color StartColor = new(0.2f, 0.9f, 0.4f, 0.6f);
+    private static readonly Color FinishColor = new(0.25f, 0.6f, 1f, 0.3f);
 
     // Strong enough to read through the game's colour grading; erase is black so it can't be
     // mistaken for deny.
@@ -28,8 +29,10 @@ internal sealed class RouteOverlay
     private readonly DecalPaint _paint;
     private int _strokeCount;
     private readonly GameObject _start;
+    private readonly GameObject _finish;
     private readonly GameObject _brush;
     private Material _startMaterial;
+    private Material _finishMaterial;
     private Material[] _brushMaterials;
     private bool _visible = true;
 
@@ -46,6 +49,9 @@ internal sealed class RouteOverlay
 
         _start = CreateStartMarker();
         _start.SetActive(false);
+
+        _finish = CreatePrimitive(PrimitiveType.Sphere, _finishMaterial, "Finish");
+        _finish.SetActive(false);
 
         _brush = CreatePrimitive(PrimitiveType.Sphere, _brushMaterials[0], "Brush");
         _brush.SetActive(false);
@@ -82,6 +88,7 @@ internal sealed class RouteOverlay
 
         _paint.ReportWhenDrawn();
         SetStart(route.Start);
+        SetFinish(route.Finish);
     }
 
     /// <summary>Do this frame's share of queued paint drawing; call every frame.</summary>
@@ -112,6 +119,19 @@ internal sealed class RouteOverlay
 
         _start.transform.position = ToUnity(start.Position);
         _start.transform.rotation = Quaternion.Euler(0f, start.YawDegrees, 0f);
+    }
+
+    /// <summary>The finish zone, drawn as the sphere Ava has to reach.</summary>
+    public void SetFinish(FinishZone finish)
+    {
+        _finish.SetActive(finish != null);
+        if (finish == null)
+        {
+            return;
+        }
+
+        _finish.transform.position = ToUnity(finish.Position);
+        _finish.transform.localScale = Vector3.one * finish.Radius * 2f;
     }
 
     /// <summary>A translucent sphere the size of the brush, tinted by mode.</summary>
@@ -165,6 +185,7 @@ internal sealed class RouteOverlay
     private void CreateMaterials()
     {
         _startMaterial = CreateMaterial(StartColor);
+        _finishMaterial = CreateMaterial(FinishColor);
         _brushMaterials = new[] { CreateMaterial(BrushAllowColor), CreateMaterial(BrushDenyColor), CreateMaterial(BrushEraseColor) };
     }
 

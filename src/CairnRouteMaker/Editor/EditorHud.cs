@@ -14,12 +14,14 @@ internal static class EditorHud
         "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
         "Hold RMB look   LMB paint   Scroll or [ ] brush size\n" +
         "Tab or 1/2/3 allow/deny/erase   G set start (facing = camera)\n" +
+        "F set finish (brush size, at least 1 m)\n" +
         "Ctrl+Z undo   Ctrl+S save   P play-test   L level select   Esc exit";
 
     private const string GamepadHelp =
         "LS move   RS look   LB/RB down/up   hold LT fast\n" +
         "RT paint   D-pad up/down brush size   X allow/deny/erase\n" +
-        "Y set start   View undo   D-pad right save   Menu play-test\n" +
+        "Y set start   A set finish (brush size)   View undo\n" +
+        "D-pad right save   Menu play-test\n" +
         "D-pad left level select   B or L3+R3 exit";
 
     public static void Draw(RouteEditor editor)
@@ -56,9 +58,10 @@ internal static class EditorHud
             $"ROUTE EDITOR - {route.ZoneKey}\n" +
             $"Brush: {mode}  radius {editor.Radius:0.00} m" +
             $"{(editor.HasBrushTarget ? "" : "  (no rock under brush)")}\n" +
-            $"Strokes: {route.Strokes.Count}  stamps: {stamps}  start: {(route.Start == null ? "not set" : "set")}\n\n" +
+            $"Strokes: {route.Strokes.Count}  stamps: {stamps}  start: {(route.Start == null ? "not set" : "set")}" +
+            $"  finish: {(route.Finish == null ? "not set" : "set")}\n\n" +
             (editor.Input.UsingGamepad ? GamepadHelp : KeyboardHelp);
-        GUI.Box(new Rect(Screen.width - 450, 20, 430, 150), text);
+        GUI.Box(new Rect(Screen.width - 450, 20, 430, 168), text);
 
         if (editor.Input.UsingGamepad && !editor.Looking)
         {

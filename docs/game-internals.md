@@ -57,6 +57,10 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
      - In the postfix, the grab data and wall hit are already up to date.
   3. `ClimbingV2PawnController.OnLimbStateChange`, an instance delegate field. **sig**; whether the game actually invokes it is a **guess**.
 - Detach: `GameEventManager.OnLimbDrop(Action<DropCause, limb>)`. **sig**
+- **What the mod uses:** it polls each limb every frame instead of hooking, and treats a limb entering `Holding` (or its anchor jumping more than 0.25 m in one frame while holding) as an attachment. That catches instant grabs without a Harmony patch. **sig**; untested at runtime.
+  - `switcher.climbingPawnController.GetLimb(ClimbingPawnCairnIK.IKLimbTarget)`. Both enums are nested in the interop: `ClimbingPawnCairnIK.IKLimbTarget` and `ClimbingV2PawnLimb.LimbState`.
+  - `limb.CurrentGrabAnchorPosition` is where the limb is attached; `limb.IsFoot` tells feet from hands.
+  - `limb.IsOnInitialHoldFromGround` marks limbs the game places itself while Ava steps from the ground onto the wall. Feet with it set are ignored, since they are often on the ground.
 
 ## Climbable surfaces (brush raycast)
 

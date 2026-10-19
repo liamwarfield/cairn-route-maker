@@ -32,8 +32,27 @@ public sealed class StartPosition
     public float YawDegrees { get; set; }
 }
 
+/// <summary>The top of a route: the climb is complete once Ava is inside this sphere.</summary>
+public sealed class FinishZone
+{
+    public Vector3 Position { get; set; }
+    public float Radius { get; set; }
+
+    /// <summary>
+    /// Whether any part of the segment from Ava's root up through her body touches the sphere, so
+    /// the check doesn't depend on exactly where the game puts her root bone.
+    /// </summary>
+    public bool Contains(Vector3 bottom, Vector3 top)
+    {
+        var segment = top - bottom;
+        var lengthSquared = segment.LengthSquared();
+        var t = lengthSquared > 0f ? System.Math.Clamp(Vector3.Dot(Position - bottom, segment) / lengthSquared, 0f, 1f) : 0f;
+        return Vector3.DistanceSquared(bottom + segment * t, Position) <= Radius * Radius;
+    }
+}
+
 /// <summary>
-/// A climbing route: an ordered list of allow/deny strokes plus where Ava starts.
+/// A climbing route: an ordered list of allow/deny strokes plus where Ava starts and finishes.
 /// Anything not covered by a stroke is off-route, and later strokes override earlier ones,
 /// so painting an area, denying holds inside it, and gym-style hold setting are all the same data.
 /// </summary>
@@ -46,14 +65,14 @@ public sealed class Route
 
     public string GameVersion { get; set; } = "";
     public StartPosition Start { get; set; }
+    public FinishZone Finish { get; set; }
     public List<Stroke> Strokes { get; } = new();
 
-    public bool IsEmpty => Start == null && Strokes.Count == 0;
+    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0;
 
     /// <summary>
     /// Whether a point counts as on-route: the last stroke containing it decides, and only an
     /// allow stroke puts it on-route (deny marks it off-route, erase clears it back to unpainted).
-    /// Not used for scoring yet; it is here so the rule lives next to the data it interprets.
     /// </summary>
     public bool IsAllowed(Vector3 point)
     {

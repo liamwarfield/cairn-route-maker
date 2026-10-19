@@ -9,7 +9,7 @@ namespace CairnRouteMaker.Editor;
 ///
 /// Gamepad layout:
 ///   left stick move, right stick look, LB/RB down/up, hold LT fast,
-///   RT paint, X cycle brush, D-pad up/down brush size, Y set start,
+///   RT paint, X cycle brush, D-pad up/down brush size, Y set start, A set finish,
 ///   View undo, D-pad right save, Menu play-test, D-pad left level select, B close.
 ///   L3+R3 opens and closes the editor from anywhere (handled by the mod, not here).
 /// With a gamepad the brush aims at the centre of the screen.
@@ -45,6 +45,7 @@ internal sealed class EditorInput
     public bool CycleBrush { get; private set; }
     public int? SelectBrush { get; private set; }
     public bool SetStart { get; private set; }
+    public bool SetFinish { get; private set; }
     public bool Undo { get; private set; }
     public bool Save { get; private set; }
     public bool PlayTest { get; private set; }
@@ -82,7 +83,7 @@ internal sealed class EditorInput
 
         CycleBrush = false;
         SelectBrush = null;
-        SetStart = Undo = Save = PlayTest = Close = LevelSelect = false;
+        SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = false;
         MenuMove = 0;
         MenuConfirm = MenuBack = false;
 
@@ -128,6 +129,7 @@ internal sealed class EditorInput
             if (keyboard.digit2Key.wasPressedThisFrame) SelectBrush = 1;
             if (keyboard.digit3Key.wasPressedThisFrame) SelectBrush = 2;
             SetStart |= keyboard.gKey.wasPressedThisFrame;
+            SetFinish |= keyboard.fKey.wasPressedThisFrame;
             Undo |= ctrl && keyboard.zKey.wasPressedThisFrame;
             Save |= ctrl && keyboard.sKey.wasPressedThisFrame;
             PlayTest |= keyboard.pKey.wasPressedThisFrame;
@@ -167,6 +169,7 @@ internal sealed class EditorInput
 
             CycleBrush |= pad.buttonWest.wasPressedThisFrame;
             SetStart |= pad.buttonNorth.wasPressedThisFrame;
+            SetFinish |= pad.buttonSouth.wasPressedThisFrame;
             Undo |= pad.selectButton.wasPressedThisFrame;
             Save |= pad.dpad.right.wasPressedThisFrame;
             PlayTest |= pad.startButton.wasPressedThisFrame;

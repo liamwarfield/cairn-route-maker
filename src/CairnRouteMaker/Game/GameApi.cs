@@ -65,6 +65,59 @@ internal static class GameApi
 
     public static bool IsAvaReady => PawnManager.MCSpawned && Switcher != null;
 
+    /// <summary>Ava's root position, or null when she isn't in the world.</summary>
+    public static Vector3? AvaPosition
+    {
+        get
+        {
+            var pawns = PawnManager.Instance;
+            var ava = pawns == null ? null : pawns.MCGameObject;
+            return ava == null ? null : ava.transform.position;
+        }
+    }
+
+    /// <summary>One hand or foot: whether it's attached, and where.</summary>
+    /// <param name="PlacedFromGround">
+    /// Set by the game on limbs it plants for her while she steps from the ground onto the wall.
+    /// </param>
+    public readonly record struct LimbGrip(bool Holding, Vector3 Anchor, bool IsFoot, bool PlacedFromGround);
+
+    private static readonly ClimbingPawnCairnIK.IKLimbTarget[] LimbOrder =
+    {
+        ClimbingPawnCairnIK.IKLimbTarget.LeftHand, ClimbingPawnCairnIK.IKLimbTarget.RightHand,
+        ClimbingPawnCairnIK.IKLimbTarget.LeftFoot, ClimbingPawnCairnIK.IKLimbTarget.RightFoot,
+    };
+
+    /// <summary>
+    /// Read all four limbs (left hand, right hand, left foot, right foot) from the climbing
+    /// controller into <paramref name="grips"/>.
+    /// </summary>
+    /// <returns>False, leaving the array alone, unless Ava is climbing.</returns>
+    public static bool TryReadGrips(LimbGrip[] grips)
+    {
+        var switcher = Switcher;
+        if (switcher == null || switcher.CurrentMode != PawnControllerSwitcher.Mode.Climbing)
+        {
+            return false;
+        }
+
+        var controller = switcher.climbingPawnController;
+        if (controller == null)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < LimbOrder.Length; i++)
+        {
+            var limb = controller.GetLimb(LimbOrder[i]);
+            grips[i] = limb != null && limb.CurrentState == ClimbingV2PawnLimb.LimbState.Holding
+                ? new LimbGrip(true, limb.CurrentGrabAnchorPosition, limb.IsFoot, limb.IsOnInitialHoldFromGround)
+                : default;
+        }
+
+        return true;
+    }
+
     /// <summary>"World/Zone", or null outside the game world (menus, loading).</summary>
     public static string CurrentZoneKey
     {
