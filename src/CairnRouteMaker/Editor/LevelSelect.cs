@@ -7,9 +7,11 @@ using Il2Cpp;
 namespace CairnRouteMaker.Editor;
 
 /// <summary>
-/// The editor's menu. The first page jumps around for testing: saved routes (travel there and
+/// The mod's menu. In game, the first page jumps around for testing: saved routes (travel there and
 /// stand on the start), zones of the current world, and the other worlds. From it, "Manage saved
-/// routes" lists every route with travel and delete actions. Pages are rebuilt each time they show.
+/// routes" lists every route with travel and delete actions. On the title screen it's the free-climb
+/// launcher instead: pick a saved route, or a mountain, zone and spawn point, to start a game there.
+/// Pages are rebuilt each time they show.
 /// </summary>
 internal sealed class LevelSelect
 {
@@ -33,12 +35,30 @@ internal sealed class LevelSelect
         public bool LeavesEditor { get; }
     }
 
+    /// <summary>Where to start a free-climb game; with a route, Ava is then taken to its start.</summary>
+    public sealed class LaunchTarget
+    {
+        public LaunchTarget(StreamingTweakables.World world, string zone, string spawner, Route route)
+        {
+            World = world;
+            Zone = zone;
+            Spawner = spawner;
+            Route = route;
+        }
+
+        public StreamingTweakables.World World { get; }
+        public string Zone { get; }
+        public string Spawner { get; }
+        public Route Route { get; }
+    }
+
     private readonly List<Entry> _entries = new();
     private readonly Stack<Action> _back = new();
     private RouteStorage _storage;
     private Traveler _traveler;
     private Action<string> _report;
     private Action<string> _onDeleted;
+    private Action<LaunchTarget> _launch;
 
     public bool IsOpen { get; private set; }
     public string Title { get; private set; }
@@ -60,6 +80,16 @@ internal sealed class LevelSelect
         _onDeleted = onDeleted;
         _back.Clear();
         ShowLevels();
+        IsOpen = true;
+    }
+
+    /// <summary>Open as the free-climb launcher (title screen): choosing a place calls <paramref name="launch"/>.</summary>
+    public void OpenLauncher(RouteStorage storage, Action<LaunchTarget> launch)
+    {
+        _storage = storage;
+        _launch = launch;
+        _back.Clear();
+        ShowLaunch();
         IsOpen = true;
     }
 
@@ -139,6 +169,82 @@ internal sealed class LevelSelect
         }
 
         End();
+    }
+
+    private void ShowLaunch()
+    {
+        Begin("FREE CLIMB");
+        Add(new Entry("Saved routes", true, false, null));
+        var anyRoutes = false;
+        foreach (var route in _storage.LoadAll())
+        {
+            anyRoutes = true;
+            var spawner = TryParseZone(route.ZoneKey, out var world, out var zone) ? FirstSpawner(world, zone) : null;
+            var label = $"{route.ZoneKey}{(route.Start == null ? "  (no start set)" : "")}{(spawner == null ? "  (can't start a game here)" : "")}";
+            Add(new Entry(label, false, spawner != null, () => _launch(new LaunchTarget(world, zone, spawner, route)), leavesEditor: true));
+        }
+
+        if (!anyRoutes)
+        {
+            Add(new Entry("No saved routes yet.", false, false, null));
+        }
+
+        Add(new Entry("Mountains", true, false, null));
+        foreach (var world in GameApi.Worlds())
+        {
+            // Locked worlds are allowed on purpose, as in the in-game level select.
+            var id = world.Id;
+            var note = world.IsUnlocked ? "" : "  (not unlocked in your story)";
+            Add(new Entry(id + note, false, GameApi.LaunchableZones(id).Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id))));
+        }
+
+        End();
+    }
+
+    private void ShowLaunchZones(StreamingTweakables.World world)
+    {
+        Begin($"FREE CLIMB - {world}");
+        foreach (var zone in GameApi.LaunchableZones(world))
+        {
+            var name = zone.Name;
+            var hasRoute = _storage.Exists($"{world}/{name}") ? "  (saved route)" : "";
+            if (zone.Spawners.Count == 1)
+            {
+                var spawner = zone.Spawners[0];
+                Add(new Entry(name + hasRoute, false, true, () => _launch(new LaunchTarget(world, name, spawner, null)), leavesEditor: true));
+            }
+            else
+            {
+                Add(new Entry($"{name}{hasRoute}  ({zone.Spawners.Count} starts)...", false, true,
+                    () => Push(() => ShowLaunchZones(world), () => ShowLaunchSpawners(world, name, zone.Spawners))));
+            }
+        }
+
+        End();
+    }
+
+    private void ShowLaunchSpawners(StreamingTweakables.World world, string zone, IReadOnlyList<string> spawners)
+    {
+        Begin($"FREE CLIMB - {world}/{zone}");
+        foreach (var spawner in spawners)
+        {
+            Add(new Entry(spawner, false, true, () => _launch(new LaunchTarget(world, zone, spawner, null)), leavesEditor: true));
+        }
+
+        End();
+    }
+
+    private static string FirstSpawner(StreamingTweakables.World world, string zone)
+    {
+        foreach (var candidate in GameApi.LaunchableZones(world))
+        {
+            if (candidate.Name == zone)
+            {
+                return candidate.Spawners[0];
+            }
+        }
+
+        return null;
     }
 
     private void ShowRoutes()

@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using Il2Cpp;
 using Il2CppTheGameBakers.Cairn;
 using Il2CppTheGameBakers.Cairn.IO;
+using Il2CppTheGameBakers.Cairn.UI;
 using MelonLoader;
 using Unity.Cinemachine;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using Object = UnityEngine.Object;
 
 namespace CairnRouteMaker.Game;
@@ -22,6 +24,9 @@ internal static class GameApi
     private static bool _savedDisableInputs;
     private static bool _inputBlocked;
     private static CinemachineBrain _disabledBrain;
+    private static bool _savedMenuDisableInputs;
+    private static bool _menuInputBlocked;
+    private static readonly List<BaseInputModule> _disabledInputModules = new();
 
     /// <summary>Rock, holds and ground: what the brush and start marker can land on.</summary>
     public static int SurfaceMask
@@ -272,6 +277,208 @@ internal static class GameApi
         return result;
     }
 
+    /// <summary>Rules for a free-climb session: no story, no tutorials, no hunger or thirst, warping allowed, deaths don't count.</summary>
+    private const GamemodeConstraints FreeClimbConstraints =
+        GamemodeConstraints.NoStory | GamemodeConstraints.NoTutorials | GamemodeConstraints.NoPhysiologicalNeeds
+        | GamemodeConstraints.CanWarp | GamemodeConstraints.MeaninglessDeath;
+
+    public readonly record struct LaunchZone(string Name, IReadOnlyList<string> Spawners);
+
+    /// <summary>
+    /// Zones of a world that a game can start in, from the main menu: the ones with spawn points
+    /// (the same spawners Summit mode offers). Empty until the game has discovered its worlds.
+    /// </summary>
+    public static List<LaunchZone> LaunchableZones(StreamingTweakables.World world)
+    {
+        var result = new List<LaunchZone>();
+        if (!TryGetWorldData(world, out var data) || data.zones == null)
+        {
+            return result;
+        }
+
+        foreach (var zone in data.zones)
+        {
+            var spawners = new List<string>();
+            if (zone != null && zone.spawnersForMainMenu != null)
+            {
+                foreach (var spawner in zone.spawnersForMainMenu)
+                {
+                    spawners.Add(spawner.name);
+                }
+            }
+
+            if (spawners.Count > 0)
+            {
+                result.Add(new LaunchZone(zone.name, spawners));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// From the main menu, start a story-free game at a spawn point. Goes through the game's own
+    /// Summit launch (Summit runs save to their own SUMMIT slots, never to story saves) with
+    /// free-climb rules instead of the player's Summit settings.
+    /// </summary>
+    public static bool TryLaunchFreeClimb(StreamingTweakables.World world, string zoneName, string spawnerName, out string reason)
+    {
+        var menu = Object.FindFirstObjectByType<MainMenu>();
+        var summit = Object.FindFirstObjectByType<SummitMenu>(FindObjectsInactive.Include);
+        if (menu == null || summit == null)
+        {
+            reason = "The main menu isn't showing.";
+            return false;
+        }
+
+        if (menu.IsBusy)
+        {
+            reason = "The menu is busy; try again.";
+            return false;
+        }
+
+        if (!TryGetWorldData(world, out var data))
+        {
+            reason = $"The game doesn't know the world {world} yet.";
+            return false;
+        }
+
+        ZoneSceneData zone = null;
+        foreach (var candidate in data.zones)
+        {
+            if (candidate != null && candidate.name == zoneName)
+            {
+                zone = candidate;
+            }
+        }
+
+        ZoneSceneData.SpawnerInfo spawner = null;
+        if (zone?.spawnersForMainMenu != null)
+        {
+            foreach (var candidate in zone.spawnersForMainMenu)
+            {
+                if (candidate.name == spawnerName)
+                {
+                    spawner = candidate;
+                }
+            }
+        }
+
+        if (spawner == null)
+        {
+            reason = $"No spawn point {spawnerName} in {world}/{zoneName}.";
+            return false;
+        }
+
+        var setup = new GameSetup(spawner) { summitMode = true, constraints = FreeClimbConstraints };
+        summit.SelectedWorld = data;
+        summit.SelectedZone = zone;
+        summit.SelectedSpawner = spawner;
+        summit.GameSetup = setup;
+        MelonLogger.Msg($"Launching free climb: {world}/{zoneName} at {spawnerName} ({setup.ToString()}).");
+        try
+        {
+            menu.TransitionToStep(MainMenu.Step.LaunchNewSummitGame);
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Error($"The menu refused to launch: {e}");
+            reason = "the game's menu refused (see log).";
+            return false;
+        }
+
+        reason = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the running game is one we launched: a Summit-type game with exactly the free-climb
+    /// rules. Story games and the player's own Summit runs never match. Says nothing about whether
+    /// Ava is in the world yet; the game keeps its last setup while back on the main menu.
+    /// </summary>
+    public static bool IsFreeClimbGame
+    {
+        get
+        {
+            try
+            {
+                var scenes = CairnSceneManager.Instance;
+                var setup = scenes == null ? null : scenes.GameSetup;
+                return setup != null && setup.summitMode && setup.constraints == FreeClimbConstraints;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+    }
+
+    /// <summary>The title screen's state, for the log.</summary>
+    public static string DescribeMainMenu()
+    {
+        try
+        {
+            var menu = Object.FindFirstObjectByType<MainMenu>();
+            var events = EventSystem.current;
+            var input = InputManager.Instance;
+            var selected = events == null || events.currentSelectedGameObject == null ? "(none)" : events.currentSelectedGameObject.name;
+            var modules = new List<string>();
+            if (events != null)
+            {
+                foreach (var module in events.GetComponents<BaseInputModule>())
+                {
+                    modules.Add($"{module.GetIl2CppType().Name}={module.enabled}");
+                }
+            }
+
+            return $"step={(menu == null ? "(no menu)" : menu.step.ToString())} busy={(menu != null && menu.IsBusy)} "
+                + $"selected={selected} eventSystem={(events == null ? "(none)" : events.enabled.ToString())} modules=[{string.Join(", ", modules)}] "
+                + $"disableInputs={(input == null ? "(no input manager)" : input.disableInputs.ToString())}";
+        }
+        catch (Exception e)
+        {
+            return $"(unreadable: {e.Message})";
+        }
+    }
+
+    /// <summary>The running game's setup, for the log.</summary>
+    public static string DescribeGameSetup()
+    {
+        try
+        {
+            var scenes = CairnSceneManager.Instance;
+            var setup = scenes == null ? null : scenes.GameSetup;
+            return setup == null ? "(none)" : $"summitMode={setup.summitMode} constraints={setup.constraints} spawner={setup.spawner}";
+        }
+        catch (Exception e)
+        {
+            return $"(unreadable: {e.Message})";
+        }
+    }
+
+    /// <summary>
+    /// Flag this run the way the game's own cheats do, so its times and paths never reach the
+    /// online leaderboards (they're filtered out as cheating records).
+    /// </summary>
+    public static void MarkRunAsCheating()
+    {
+        try
+        {
+            GameEventManager.Cheats();
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Warning($"Couldn't flag the run as cheating: {e.Message}");
+        }
+    }
+
+    private static bool TryGetWorldData(StreamingTweakables.World world, out WorldZoneData data)
+    {
+        data = null;
+        var scenes = CairnSceneManager.Instance;
+        return scenes != null && scenes.TryGetWorld(world, out data) && data != null;
+    }
+
     /// <summary>Loading, streaming or travelling: not a moment to start another trip.</summary>
     public static bool IsWorldBusy
     {
@@ -372,6 +579,65 @@ internal static class GameApi
         }
 
         _inputBlocked = block;
+    }
+
+    /// <summary>
+    /// Stop the title screen reacting to keyboard, mouse and gamepad while our menu is over it.
+    /// Unlike <see cref="BlockGameInput"/> it leaves the cursor alone, and it also turns off the
+    /// UI event system's input modules, which move the menu's selection on their own. The event
+    /// system itself stays on: MainMenu.TransitionToStep reads EventSystem.current and throws
+    /// when it's null.
+    /// </summary>
+    public static void BlockMenuInput(bool block)
+    {
+        if (block == _menuInputBlocked)
+        {
+            return;
+        }
+
+        var input = InputManager.Instance;
+        if (block)
+        {
+            if (input != null)
+            {
+                _savedMenuDisableInputs = input.disableInputs;
+                input.DisableInputs();
+            }
+
+            var events = EventSystem.current;
+            if (events != null)
+            {
+                foreach (var module in events.GetComponents<BaseInputModule>())
+                {
+                    if (module.enabled)
+                    {
+                        module.enabled = false;
+                        _disabledInputModules.Add(module);
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (input != null)
+            {
+                input.EnableInputs();
+                input.disableInputs = _savedMenuDisableInputs;
+                input.UpdateInputContext();
+            }
+
+            foreach (var module in _disabledInputModules)
+            {
+                if (module != null)
+                {
+                    module.enabled = true;
+                }
+            }
+
+            _disabledInputModules.Clear();
+        }
+
+        _menuInputBlocked = block;
     }
 
     /// <summary>
