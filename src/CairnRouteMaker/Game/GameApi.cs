@@ -27,6 +27,10 @@ internal static class GameApi
     private static bool _savedMenuDisableInputs;
     private static bool _menuInputBlocked;
     private static readonly List<BaseInputModule> _disabledInputModules = new();
+    private static CanvasGroup _hiddenTitleMenu;
+    private static float _savedTitleMenuAlpha;
+    private static UnityEngine.UI.Image _hiddenTitleArrow;
+    private static bool _savedTitleArrowEnabled;
 
     /// <summary>Rock, holds and ground: what the brush and start marker can land on.</summary>
     public static int SurfaceMask
@@ -638,6 +642,51 @@ internal static class GameApi
         }
 
         _menuInputBlocked = block;
+    }
+
+    /// <summary>
+    /// Hide the title screen's buttons and bouncing arrow while our menu stands in for them (it
+    /// copies their look and sits in the same place). The scene behind stays.
+    /// </summary>
+    public static void HideTitleMenu(bool hide)
+    {
+        if (hide)
+        {
+            if (_hiddenTitleMenu == null)
+            {
+                var element = Object.FindFirstObjectByType<MainMenuModeSelectElement>();
+                if (element == null || element.group == null)
+                {
+                    return;
+                }
+
+                _hiddenTitleMenu = element.group;
+                _savedTitleMenuAlpha = _hiddenTitleMenu.alpha;
+                _hiddenTitleArrow = element.mainMenu?.bouncingArrow?.image;
+                _savedTitleArrowEnabled = _hiddenTitleArrow != null && _hiddenTitleArrow.enabled;
+            }
+
+            _hiddenTitleMenu.alpha = 0f;
+            if (_hiddenTitleArrow != null)
+            {
+                _hiddenTitleArrow.enabled = false;
+            }
+
+            return;
+        }
+
+        if (_hiddenTitleMenu != null)
+        {
+            _hiddenTitleMenu.alpha = _savedTitleMenuAlpha;
+        }
+
+        if (_hiddenTitleArrow != null)
+        {
+            _hiddenTitleArrow.enabled = _savedTitleArrowEnabled;
+        }
+
+        _hiddenTitleMenu = null;
+        _hiddenTitleArrow = null;
     }
 
     /// <summary>

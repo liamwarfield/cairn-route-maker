@@ -375,6 +375,7 @@ internal sealed class RouteEditor
 
     private void UpdateLevelSelect()
     {
+        LevelSelectView.Show(LevelSelect, Input);
         if (Input.MenuBack)
         {
             LevelSelect.Back();

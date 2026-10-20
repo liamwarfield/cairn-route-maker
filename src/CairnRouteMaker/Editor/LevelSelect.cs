@@ -8,7 +8,7 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// The mod's menu. In game, the first page jumps around for testing: saved routes (travel there and
-/// stand on the start), zones of the current world, and the other worlds. From it, "Manage saved
+/// stand on the start), zones of the current mountain, and the other mountains. From it, "Manage saved
 /// routes" lists every route with travel and delete actions. On the title screen it's the free-climb
 /// launcher instead: pick a saved route, or a mountain, zone and spawn point, to start a game there.
 /// Pages are rebuilt each time they show.
@@ -17,16 +17,20 @@ internal sealed class LevelSelect
 {
     public sealed class Entry
     {
-        public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false)
+        public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null)
         {
             Label = label;
             IsHeader = isHeader;
             Enabled = enabled;
             Choose = choose;
             LeavesEditor = leavesEditor;
+            Note = note;
         }
 
         public string Label { get; }
+
+        /// <summary>Shown smaller and dimmer after the label, e.g. "you are here".</summary>
+        public string Note { get; }
         public bool IsHeader { get; }
         public bool Enabled { get; }
         public Action Choose { get; }
@@ -62,6 +66,15 @@ internal sealed class LevelSelect
 
     public bool IsOpen { get; private set; }
     public string Title { get; private set; }
+
+    /// <summary>A small line above the title: where this page was reached from.</summary>
+    public string Breadcrumb { get; private set; }
+
+    /// <summary>A line under the title, or null.</summary>
+    public string Description { get; private set; }
+
+    /// <summary>Goes up each time a page is shown, so the view knows to rebuild.</summary>
+    public int Page { get; private set; }
     public IReadOnlyList<Entry> Entries => _entries;
     public int Selected { get; private set; }
 
@@ -138,14 +151,15 @@ internal sealed class LevelSelect
 
     private void ShowLevels()
     {
-        Begin("LEVEL SELECT");
-        Add(new Entry("Manage saved routes...", false, true, () => Push(ShowLevels, ShowRoutes)));
+        var here = GameApi.CurrentZoneKey;
+        Begin("Level Select", "Route Maker", here == null ? null : $"You're in {ZoneNames.PrettyKey(here)}, {ZoneNames.World(here)}");
+        Add(new Entry("Manage saved routes", false, true, () => Push(ShowLevels, ShowRoutes)));
 
         Add(new Entry("Saved routes", true, false, null));
         foreach (var route in _storage.LoadAll())
         {
-            var label = $"{route.ZoneKey}{(route.Start == null ? "  (no start set)" : "")}";
-            Add(new Entry(label, false, TryParseZone(route.ZoneKey, out _, out _), () => TravelTo(route), leavesEditor: true));
+            Add(new Entry(ZoneNames.PrettyKey(route.ZoneKey), false, TryParseZone(route.ZoneKey, out _, out _), () => TravelTo(route), leavesEditor: true,
+                note: route.Start == null ? "no start set" : null));
         }
 
         if (GameApi.CurrentWorld is { } currentWorld)
@@ -153,19 +167,19 @@ internal sealed class LevelSelect
             Add(new Entry($"Zones in {currentWorld}", true, false, null));
             foreach (var zone in GameApi.ZonesInCurrentWorld())
             {
-                var note = zone.IsCurrent ? "  (you are here)" : zone.IsDiscovered ? "" : "  (not discovered yet)";
+                var note = zone.IsCurrent ? "you are here" : zone.IsDiscovered ? null : "not discovered yet";
                 var name = zone.Name;
-                Add(new Entry(name + note, false, !zone.IsCurrent, () => _traveler.Start(currentWorld, name, null, 0f, _report), leavesEditor: true));
+                Add(new Entry(ZoneNames.Pretty(name), false, !zone.IsCurrent, () => _traveler.Start(currentWorld, name, null, 0f, _report), leavesEditor: true, note: note));
             }
         }
 
-        Add(new Entry("Worlds", true, false, null));
+        Add(new Entry("Mountains", true, false, null));
         foreach (var world in GameApi.Worlds())
         {
             // Locked worlds are allowed on purpose: this is a mapping tool, not a playthrough.
-            var note = world.IsCurrent ? "  (you are here)" : world.IsUnlocked ? "" : "  (not unlocked in this save)";
+            var note = world.IsCurrent ? "you are here" : world.IsUnlocked ? null : "not unlocked in this save";
             var id = world.Id;
-            Add(new Entry(id + note, false, !world.IsCurrent, () => _traveler.Start(id, null, null, 0f, _report), leavesEditor: true));
+            Add(new Entry(id.ToString(), false, !world.IsCurrent, () => _traveler.Start(id, null, null, 0f, _report), leavesEditor: true, note: note));
         }
 
         End();
@@ -173,15 +187,15 @@ internal sealed class LevelSelect
 
     private void ShowLaunch()
     {
-        Begin("FREE CLIMB");
+        Begin("Free Climb", null, "Climb a saved route, or start anywhere on a mountain.");
         Add(new Entry("Saved routes", true, false, null));
         var anyRoutes = false;
         foreach (var route in _storage.LoadAll())
         {
             anyRoutes = true;
             var spawner = TryParseZone(route.ZoneKey, out var world, out var zone) ? FirstSpawner(world, zone) : null;
-            var label = $"{route.ZoneKey}{(route.Start == null ? "  (no start set)" : "")}{(spawner == null ? "  (can't start a game here)" : "")}";
-            Add(new Entry(label, false, spawner != null, () => _launch(new LaunchTarget(world, zone, spawner, route)), leavesEditor: true));
+            var note = spawner == null ? "can't start a game here" : route.Start == null ? "no start set" : null;
+            Add(new Entry(ZoneNames.PrettyKey(route.ZoneKey), false, spawner != null, () => _launch(new LaunchTarget(world, zone, spawner, route)), leavesEditor: true, note: note));
         }
 
         if (!anyRoutes)
@@ -194,8 +208,8 @@ internal sealed class LevelSelect
         {
             // Locked worlds are allowed on purpose, as in the in-game level select.
             var id = world.Id;
-            var note = world.IsUnlocked ? "" : "  (not unlocked in your story)";
-            Add(new Entry(id + note, false, GameApi.LaunchableZones(id).Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id))));
+            var note = world.IsUnlocked ? null : "not unlocked in your story";
+            Add(new Entry(id.ToString(), false, GameApi.LaunchableZones(id).Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id)), note: note));
         }
 
         End();
@@ -203,20 +217,23 @@ internal sealed class LevelSelect
 
     private void ShowLaunchZones(StreamingTweakables.World world)
     {
-        Begin($"FREE CLIMB - {world}");
+        Begin(world.ToString(), "Free Climb", "Choose a zone to start in.");
         foreach (var zone in GameApi.LaunchableZones(world))
         {
             var name = zone.Name;
-            var hasRoute = _storage.Exists($"{world}/{name}") ? "  (saved route)" : "";
+            var hasRoute = _storage.Exists($"{world}/{name}");
             if (zone.Spawners.Count == 1)
             {
                 var spawner = zone.Spawners[0];
-                Add(new Entry(name + hasRoute, false, true, () => _launch(new LaunchTarget(world, name, spawner, null)), leavesEditor: true));
+                Add(new Entry(ZoneNames.Pretty(name), false, true, () => _launch(new LaunchTarget(world, name, spawner, null)), leavesEditor: true,
+                    note: hasRoute ? "saved route" : null));
             }
             else
             {
-                Add(new Entry($"{name}{hasRoute}  ({zone.Spawners.Count} starts)...", false, true,
-                    () => Push(() => ShowLaunchZones(world), () => ShowLaunchSpawners(world, name, zone.Spawners))));
+                var starts = $"{zone.Spawners.Count} starts";
+                Add(new Entry(ZoneNames.Pretty(name), false, true,
+                    () => Push(() => ShowLaunchZones(world), () => ShowLaunchSpawners(world, name, zone.Spawners)),
+                    note: hasRoute ? $"saved route · {starts}" : starts));
             }
         }
 
@@ -225,7 +242,7 @@ internal sealed class LevelSelect
 
     private void ShowLaunchSpawners(StreamingTweakables.World world, string zone, IReadOnlyList<string> spawners)
     {
-        Begin($"FREE CLIMB - {world}/{zone}");
+        Begin(ZoneNames.Pretty(zone), $"Free Climb · {world}", "Choose where to start.");
         foreach (var spawner in spawners)
         {
             Add(new Entry(spawner, false, true, () => _launch(new LaunchTarget(world, zone, spawner, null)), leavesEditor: true));
@@ -249,7 +266,7 @@ internal sealed class LevelSelect
 
     private void ShowRoutes()
     {
-        Begin("SAVED ROUTES");
+        Begin("Saved Routes", "Level Select");
         var routes = _storage.LoadAll();
         if (routes.Count == 0)
         {
@@ -258,9 +275,7 @@ internal sealed class LevelSelect
 
         foreach (var route in routes)
         {
-            var strokes = route.Strokes.Count;
-            var label = $"{route.ZoneKey}   {strokes} stroke{(strokes == 1 ? "" : "s")}, {(route.Start == null ? "no start" : "start set")}";
-            Add(new Entry(label, false, true, () => Push(ShowRoutes, () => ShowRouteActions(route))));
+            Add(new Entry(ZoneNames.PrettyKey(route.ZoneKey), false, true, () => Push(ShowRoutes, () => ShowRouteActions(route)), note: Summary(route)));
         }
 
         End();
@@ -268,17 +283,16 @@ internal sealed class LevelSelect
 
     private void ShowRouteActions(Route route)
     {
-        Begin(route.ZoneKey);
+        Begin(ZoneNames.PrettyKey(route.ZoneKey), $"Saved Routes · {ZoneNames.World(route.ZoneKey)}", Summary(route));
         var canTravel = TryParseZone(route.ZoneKey, out _, out _);
         Add(new Entry(route.Start == null ? "Travel to this zone" : "Travel to the start", false, canTravel, () => TravelTo(route), leavesEditor: true));
-        Add(new Entry("Delete this route...", false, true, () => Push(() => ShowRouteActions(route), () => ShowConfirmDelete(route))));
+        Add(new Entry("Delete this route", false, true, () => Push(() => ShowRouteActions(route), () => ShowConfirmDelete(route))));
         End();
     }
 
     private void ShowConfirmDelete(Route route)
     {
-        Begin($"Delete the route for {route.ZoneKey}?");
-        Add(new Entry("It's moved to UserData/CairnRouteMaker/Backups, so it can be restored.", true, false, null));
+        Begin("Delete this route?", ZoneNames.PrettyKey(route.ZoneKey), "It's moved to UserData/CairnRouteMaker/Backups, so it can be restored.");
         Add(new Entry("No, keep it", false, true, Back));
         Add(new Entry("Yes, delete it", false, true, () =>
         {
@@ -299,6 +313,13 @@ internal sealed class LevelSelect
             ShowRoutes();
         }));
         End();
+    }
+
+    private static string Summary(Route route)
+    {
+        var strokes = route.Strokes.Count;
+        return $"{strokes} stroke{(strokes == 1 ? "" : "s")} · {(route.Start == null ? "no start" : "start set")}"
+            + $" · {(route.Finish == null ? "no finish" : "finish set")}";
     }
 
     private void TravelTo(Route route)
@@ -327,9 +348,12 @@ internal sealed class LevelSelect
         next();
     }
 
-    private void Begin(string title)
+    private void Begin(string title, string breadcrumb = null, string description = null)
     {
         Title = title;
+        Breadcrumb = breadcrumb;
+        Description = description;
+        Page++;
         _entries.Clear();
         ClickedIndex = null;
     }

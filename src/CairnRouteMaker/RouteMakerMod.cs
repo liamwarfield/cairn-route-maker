@@ -68,7 +68,11 @@ public sealed class RouteMakerMod : MelonMod
         }
     }
 
-    public override void OnLateUpdate() => _editor?.LateUpdate();
+    public override void OnLateUpdate()
+    {
+        _editor?.LateUpdate();
+        LevelSelectView.EndFrame();
+    }
 
     public override void OnGUI()
     {

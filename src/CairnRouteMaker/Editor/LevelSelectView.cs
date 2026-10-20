@@ -1,0 +1,508 @@
+using System.Collections.Generic;
+using CairnRouteMaker.Game;
+using Il2CppTMPro;
+using UnityEngine;
+using UnityEngine.UI;
+using Object = UnityEngine.Object;
+
+namespace CairnRouteMaker.Editor;
+
+/// <summary>
+/// Draws the level select / free-climb launcher the way the title screen draws its menu: big
+/// left-aligned labels in the game's font, the selected one sliding right in the selected colour,
+/// with the bouncing arrow beside it. A soft dark gradient on the left keeps it readable over the
+/// world. It's a uGUI canvas, so it's driven from Update: call <see cref="Show"/> every frame the menu
+/// is open, and <see cref="EndFrame"/> hides it on the first frame nobody did.
+/// </summary>
+internal static class LevelSelectView
+{
+    // Layout, in a 1920x1080 reference space; the canvas is scaled to the screen height.
+    private const float ReferenceHeight = 1080f;
+    private const float Left = 150f;
+    private const float ListTop = 350f;
+    private const float ListBottomMargin = 130f;
+    private const float ListWidth = 1100f;
+    private const float RowHeightPerFontSize = 1.55f;
+    private const float HeaderHeight = 46f;
+    private const float HeaderGap = 18f;
+    private const float NoteGap = 18f;
+
+    /// <summary>The list fades out over this much at its top and bottom edges.</summary>
+    private const float Fade = 44f;
+    private const float PageFadeSeconds = 0.18f;
+    private const float BounceSeconds = 0.9f;
+    private const float DisabledAlpha = 0.4f;
+
+    private static GameObject _root;
+    private static Canvas _canvas;
+    private static CanvasGroup _group;
+    private static RectTransform _viewport;
+    private static RectTransform _content;
+    private static RectTransform _arrow;
+    private static Image _arrowImage;
+    private static TextMeshProUGUI _breadcrumb;
+    private static TextMeshProUGUI _title;
+    private static TextMeshProUGUI _description;
+    private static TextMeshProUGUI _hints;
+    private static readonly List<Row> Rows = new();
+    private static int _rowCount;
+    private static float _contentHeight;
+
+    private static MenuStyle _style;
+    private static LevelSelect _shownMenu;
+    private static int _shownPage = -1;
+    private static int _shownFrame = -1;
+    private static bool? _shownGamepad;
+    private static float _scroll;
+    private static float _arrowY;
+    private static float _pageTime;
+    private static Vector2 _lastPointer;
+    private static Sprite _fallbackArrow;
+    private static Sprite _gradient;
+
+    private sealed class Row
+    {
+        public RectTransform Rect;
+        public TextMeshProUGUI Label;
+        public TextMeshProUGUI Note;
+        public float Top;
+        public float Height;
+        public bool Header;
+        public bool Enabled;
+
+        /// <summary>0 = not selected, 1 = selected; eased between the two.</summary>
+        public float Selection;
+    }
+
+    private static float ViewportHeight => ReferenceHeight - ListTop - ListBottomMargin + Fade * 2f;
+
+    /// <summary>
+    /// Show the menu this frame. Pointer hover selects an entry and a click sets
+    /// <see cref="LevelSelect.ClickedIndex"/>, so call this before handling the menu's input.
+    /// </summary>
+    public static void Show(LevelSelect menu, EditorInput input)
+    {
+        if (!menu.IsOpen)
+        {
+            return;
+        }
+
+        if (_root == null)
+        {
+            Build();
+        }
+
+        _shownFrame = Time.frameCount;
+        if (!_root.activeSelf)
+        {
+            _root.SetActive(true);
+            _shownPage = -1;
+        }
+
+        _canvas.scaleFactor = Screen.height / ReferenceHeight;
+        if (_shownGamepad != input.UsingGamepad)
+        {
+            _shownGamepad = input.UsingGamepad;
+            var hints = input.UsingGamepad
+                ? Hint("D-pad", "Choose") + Hint("A", "Select") + Hint("B", "Back")
+                : Hint("Arrows", "Choose") + Hint("Enter", "Select") + Hint("Esc", "Back");
+            SetText(_hints, hints, _style.FontSize * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
+        }
+
+        if (menu != _shownMenu || menu.Page != _shownPage)
+        {
+            Rebuild(menu, input);
+        }
+
+        HandlePointer(menu, input);
+        Animate(menu);
+    }
+
+    /// <summary>Hide the menu if <see cref="Show"/> wasn't called this frame. Call from LateUpdate.</summary>
+    public static void EndFrame()
+    {
+        if (_root != null && _shownFrame != Time.frameCount && _root.activeSelf)
+        {
+            _root.SetActive(false);
+            _shownMenu = null;
+        }
+    }
+
+    private static void HandlePointer(LevelSelect menu, EditorInput input)
+    {
+        var pointer = input.PointerPosition;
+        var moved = (pointer - _lastPointer).sqrMagnitude > 1f;
+        _lastPointer = pointer;
+        if (input.UsingGamepad || (!moved && !input.MenuClick))
+        {
+            return;
+        }
+
+        var index = RowAt(pointer);
+        if (index < 0)
+        {
+            return;
+        }
+
+        menu.Select(index);
+        if (input.MenuClick)
+        {
+            menu.ClickedIndex = index;
+        }
+    }
+
+    /// <summary>The choosable entry under a screen point (origin bottom left), or -1.</summary>
+    private static int RowAt(Vector2 screen)
+    {
+        var scale = _canvas.scaleFactor;
+        var x = screen.x / scale;
+        var y = (Screen.height - screen.y) / scale;
+        if (x < Left - 40f || x > Left + ListWidth || y < ListTop || y > ReferenceHeight - ListBottomMargin)
+        {
+            return -1;
+        }
+
+        var inContent = y - (ListTop - Fade) + _scroll;
+        for (var i = 0; i < _rowCount; i++)
+        {
+            var row = Rows[i];
+            if (!row.Header && row.Enabled && inContent >= row.Top && inContent < row.Top + row.Height)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static void Animate(LevelSelect menu)
+    {
+        var dt = Time.unscaledDeltaTime;
+        _pageTime += dt;
+        _group.alpha = Mathf.Clamp01(_pageTime / PageFadeSeconds);
+
+        var selected = menu.Selected >= 0 && menu.Selected < _rowCount ? menu.Selected : -1;
+        var step = dt / Mathf.Max(_style.TransitionSeconds, 0.01f);
+        for (var i = 0; i < _rowCount; i++)
+        {
+            var row = Rows[i];
+            if (row.Header)
+            {
+                continue;
+            }
+
+            row.Selection = Mathf.MoveTowards(row.Selection, i == selected ? 1f : 0f, step);
+            var eased = Mathf.SmoothStep(0f, 1f, row.Selection);
+            row.Label.rectTransform.anchoredPosition = new Vector2(eased * _style.SelectedOffsetX, 0f);
+            var color = row.Enabled ? Color.Lerp(_style.NotSelected, _style.Selected, eased) : WithAlpha(_style.NotSelected, DisabledAlpha);
+            row.Label.color = color;
+            row.Note.color = WithAlpha(color, color.a * 0.65f);
+        }
+
+        _scroll = Mathf.Lerp(_scroll, TargetScroll(selected), 1f - Mathf.Exp(-14f * dt));
+        _content.anchoredPosition = new Vector2(0f, _scroll);
+
+        if (selected < 0)
+        {
+            _arrow.gameObject.SetActive(false);
+            return;
+        }
+
+        var target = RowCenter(Rows[selected]);
+        _arrowY = _arrow.gameObject.activeSelf ? Mathf.Lerp(_arrowY, target, 1f - Mathf.Exp(-25f * dt)) : target;
+        _arrow.gameObject.SetActive(true);
+        var bounce = _style.ArrowBounce * (0.5f - 0.5f * Mathf.Cos(Time.unscaledTime * (2f * Mathf.PI / BounceSeconds)));
+        _arrow.anchoredPosition = new Vector2(Left + bounce, -_arrowY);
+
+        // Fade the arrow out with its row when the row scrolls into the list's faded edge.
+        var outside = Mathf.Max(ListTop - _arrowY, _arrowY - (ReferenceHeight - ListBottomMargin), 0f);
+        _arrowImage.color = WithAlpha(_style.ArrowColor, _style.ArrowColor.a * Mathf.Clamp01(1f - outside / Fade));
+    }
+
+    /// <summary>A row's vertical centre on screen, in reference units from the top.</summary>
+    private static float RowCenter(Row row) => ListTop - Fade + row.Top + row.Height / 2f - _scroll;
+
+    /// <summary>Scroll that keeps the selected row near the middle, without going past either end.</summary>
+    private static float TargetScroll(int selected)
+    {
+        var max = Mathf.Max(0f, _contentHeight - ViewportHeight);
+        if (selected < 0 || max == 0f)
+        {
+            return Mathf.Clamp(_scroll, 0f, max);
+        }
+
+        var row = Rows[selected];
+        return Mathf.Clamp(row.Top + row.Height / 2f - ViewportHeight / 2f, 0f, max);
+    }
+
+    private static void Rebuild(LevelSelect menu, EditorInput input)
+    {
+        _style = MenuStyle.Current;
+        _shownMenu = menu;
+        _shownPage = menu.Page;
+        _pageTime = 0f;
+        _lastPointer = input.PointerPosition;
+
+        var size = _style.FontSize;
+        SetText(_breadcrumb, menu.Breadcrumb, size * 0.5f, WithAlpha(_style.NotSelected, 0.6f));
+        SetText(_title, menu.Title, size * 1.6f, _style.Selected);
+        SetText(_description, menu.Description, size * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
+        SetText(_hints, _hints.text, size * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
+        // Checked with Unity's null too: a destroyed sprite would draw as a white square.
+        var useGameArrow = _style.Arrow != null;
+        _arrowImage.sprite = useGameArrow ? _style.Arrow : _fallbackArrow ??= ArrowSprite();
+        _arrow.sizeDelta = useGameArrow ? _style.ArrowSize : new Vector2(30f, 30f);
+
+        var entries = menu.Entries;
+        var y = Fade;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            var row = RowFor(i);
+            row.Header = entry.IsHeader;
+            row.Enabled = entry.Enabled;
+            row.Selection = 0f;
+            if (row.Header && i > 0)
+            {
+                y += HeaderGap;
+            }
+
+            row.Top = y;
+            row.Height = row.Header ? HeaderHeight : size * RowHeightPerFontSize;
+            y += row.Height;
+            Place(row.Rect, 0f, row.Top, ListWidth, row.Height);
+
+            var label = row.Label;
+            label.rectTransform.anchoredPosition = Vector2.zero;
+            if (row.Header)
+            {
+                SetText(label, entry.Label, size * 0.5f, WithAlpha(_style.NotSelected, 0.55f));
+                label.fontStyle = FontStyles.UpperCase;
+                label.characterSpacing = 12f;
+                label.alignment = TextAlignmentOptions.BottomLeft;
+                row.Note.gameObject.SetActive(false);
+                continue;
+            }
+
+            SetText(label, entry.Label, size, _style.NotSelected);
+            label.fontStyle = FontStyles.Normal;
+            label.characterSpacing = 0f;
+            label.alignment = TextAlignmentOptions.MidlineLeft;
+
+            var note = row.Note;
+            SetText(note, entry.Note, size * 0.5f, _style.NotSelected);
+            if (entry.Note != null)
+            {
+                var width = Mathf.Min(label.GetPreferredValues(entry.Label).x, label.rectTransform.rect.width);
+                note.rectTransform.anchoredPosition = new Vector2(width + NoteGap, 0f);
+            }
+        }
+
+        _contentHeight = y + Fade;
+        _rowCount = entries.Count;
+        for (var i = 0; i < Rows.Count; i++)
+        {
+            Rows[i].Rect.gameObject.SetActive(i < _rowCount);
+        }
+
+        _content.sizeDelta = new Vector2(ListWidth, _contentHeight);
+        var selected = menu.Selected >= 0 && menu.Selected < _rowCount ? menu.Selected : -1;
+        _scroll = TargetScroll(selected);
+        _arrow.gameObject.SetActive(false);
+    }
+
+    private static Row RowFor(int index)
+    {
+        while (Rows.Count <= index)
+        {
+            var rect = NewRect($"Row{Rows.Count}", _content);
+            var label = NewText("Label", rect);
+            var labelRect = label.rectTransform;
+            labelRect.anchorMin = new Vector2(0f, 0f);
+            labelRect.anchorMax = new Vector2(0f, 1f);
+            labelRect.pivot = new Vector2(0f, 0.5f);
+            labelRect.sizeDelta = new Vector2(ListWidth - 260f, 0f);
+
+            // A child of the label, so it slides with it.
+            var note = NewText("Note", labelRect);
+            note.alignment = TextAlignmentOptions.MidlineLeft;
+            var noteRect = note.rectTransform;
+            noteRect.anchorMin = new Vector2(0f, 0f);
+            noteRect.anchorMax = new Vector2(0f, 1f);
+            noteRect.pivot = new Vector2(0f, 0.5f);
+            noteRect.sizeDelta = new Vector2(600f, 0f);
+
+            Rows.Add(new Row { Rect = rect, Label = label, Note = note });
+        }
+
+        return Rows[index];
+    }
+
+    private static void Build()
+    {
+        Rows.Clear();
+        _rowCount = 0;
+        _shownMenu = null;
+        _shownGamepad = null;
+        _style = MenuStyle.Current;
+
+        _root = new GameObject("CairnRouteMaker.LevelSelectView");
+        Object.DontDestroyOnLoad(_root);
+        _root.layer = 5; // UI
+        _canvas = _root.AddComponent<Canvas>();
+        _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        _canvas.sortingOrder = 32000;
+        _group = _root.AddComponent<CanvasGroup>();
+        _group.interactable = false;
+        _group.blocksRaycasts = false;
+
+        var shade = NewRect("Shade", _root.transform);
+        shade.anchorMin = new Vector2(0f, 0f);
+        shade.anchorMax = new Vector2(0f, 1f);
+        shade.pivot = new Vector2(0f, 0.5f);
+        shade.sizeDelta = new Vector2(ListWidth + 150f, 0f);
+        var shadeImage = shade.gameObject.AddComponent<Image>();
+        shadeImage.sprite = _gradient ??= GradientSprite();
+        shadeImage.color = Color.black;
+        shadeImage.raycastTarget = false;
+
+        _breadcrumb = NewText("Breadcrumb", _root.transform);
+        Place(_breadcrumb.rectTransform, Left, 150f, ListWidth, 34f);
+        _breadcrumb.fontStyle = FontStyles.UpperCase;
+        _breadcrumb.characterSpacing = 12f;
+        _breadcrumb.alignment = TextAlignmentOptions.BottomLeft;
+
+        _title = NewText("Title", _root.transform);
+        Place(_title.rectTransform, Left, 184f, ListWidth, 84f);
+        _title.alignment = TextAlignmentOptions.MidlineLeft;
+
+        _description = NewText("Description", _root.transform);
+        Place(_description.rectTransform, Left, 268f, ListWidth, 40f);
+        _description.alignment = TextAlignmentOptions.TopLeft;
+
+        _hints = NewText("Hints", _root.transform);
+        Place(_hints.rectTransform, Left, ReferenceHeight - 80f, ListWidth, 40f);
+        _hints.alignment = TextAlignmentOptions.MidlineLeft;
+
+        _viewport = NewRect("List", _root.transform);
+        Place(_viewport, Left, ListTop - Fade, ListWidth + 200f, ViewportHeight);
+        var mask = _viewport.gameObject.AddComponent<RectMask2D>();
+        mask.softness = new Vector2Int(0, (int)Fade);
+
+        _content = NewRect("Content", _viewport);
+        Place(_content, 0f, 0f, ListWidth, 0f);
+
+        _arrow = NewRect("Arrow", _root.transform);
+        _arrow.anchorMin = _arrow.anchorMax = new Vector2(0f, 1f);
+        _arrow.pivot = new Vector2(0f, 0.5f);
+        _arrow.sizeDelta = new Vector2(30f, 30f);
+        _arrowImage = _arrow.gameObject.AddComponent<Image>();
+        _arrowImage.sprite = _fallbackArrow ??= ArrowSprite();
+        _arrowImage.preserveAspect = true;
+        _arrowImage.raycastTarget = false;
+        _arrow.gameObject.SetActive(false);
+
+        _root.SetActive(false);
+    }
+
+    private static string Hint(string key, string action) => $"<color=#FFFFFF>{key}</color>  {action}<space=2em>";
+
+    private static void SetText(TextMeshProUGUI text, string value, float size, Color color)
+    {
+        if (_style.Font != null && text.font != _style.Font)
+        {
+            text.font = _style.Font;
+        }
+
+        if (_style.Material != null)
+        {
+            text.fontSharedMaterial = _style.Material;
+        }
+
+        text.fontSize = size;
+        text.color = color;
+        text.text = value ?? "";
+        text.gameObject.SetActive(!string.IsNullOrEmpty(value));
+    }
+
+    private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);
+
+    private static RectTransform NewRect(string name, Transform parent)
+    {
+        var go = new GameObject(name) { layer = 5 };
+        var rect = go.AddComponent<RectTransform>();
+        rect.SetParent(parent, false);
+        return rect;
+    }
+
+    private static TextMeshProUGUI NewText(string name, Transform parent)
+    {
+        var text = NewRect(name, parent).gameObject.AddComponent<TextMeshProUGUI>();
+        text.raycastTarget = false;
+        text.richText = true;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
+        text.overflowMode = TextOverflowModes.Ellipsis;
+        return text;
+    }
+
+    /// <summary>Anchor to the parent's top left; y counts down from the top.</summary>
+    private static void Place(RectTransform rect, float x, float y, float width, float height)
+    {
+        rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
+        rect.anchoredPosition = new Vector2(x, -y);
+        rect.sizeDelta = new Vector2(width, height);
+    }
+
+    /// <summary>White on the left fading to clear on the right, tinted by the image colour.</summary>
+    private static Sprite GradientSprite()
+    {
+        const int width = 256;
+        var texture = Keep(new Texture2D(width, 1, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
+        for (var x = 0; x < width; x++)
+        {
+            var fade = 1f - Mathf.SmoothStep(0f, 1f, x / (width - 1f));
+            texture.SetPixel(x, 0, new Color(1f, 1f, 1f, 0.6f * fade * fade));
+        }
+
+        texture.Apply();
+        return Keep(Sprite.Create(texture, new Rect(0f, 0f, width, 1f), new Vector2(0.5f, 0.5f)));
+    }
+
+    /// <summary>A right-pointing triangle, for when the title screen's arrow hasn't been seen.</summary>
+    private static Sprite ArrowSprite()
+    {
+        const int size = 64;
+        var texture = Keep(new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
+        var a = new Vector2(10f, 6f);
+        var b = new Vector2(10f, 58f);
+        var c = new Vector2(58f, 32f);
+        for (var y = 0; y < size; y++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var p = new Vector2(x + 0.5f, y + 0.5f);
+                var inside = Mathf.Min(EdgeDistance(a, b, p), Mathf.Min(EdgeDistance(b, c, p), EdgeDistance(c, a, p)));
+                texture.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(inside + 0.5f)));
+            }
+        }
+
+        texture.Apply();
+        return Keep(Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f)));
+    }
+
+    /// <summary>Signed distance from the line a→b, positive to its right (inside, for a clockwise triangle).</summary>
+    private static float EdgeDistance(Vector2 a, Vector2 b, Vector2 p)
+    {
+        var edge = (b - a).normalized;
+        return edge.y * (p.x - a.x) - edge.x * (p.y - a.y);
+    }
+
+    /// <summary>Survive the game's asset unloading on scene changes (see DecalPaint.Keep).</summary>
+    private static T Keep<T>(T asset)
+        where T : Object
+    {
+        asset.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+        return asset;
+    }
+}
