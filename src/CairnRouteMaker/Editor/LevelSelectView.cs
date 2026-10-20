@@ -30,7 +30,8 @@ internal static class LevelSelectView
     /// <summary>The list fades out over this much at its top and bottom edges.</summary>
     private const float Fade = 44f;
     private const float PageFadeSeconds = 0.18f;
-    private const float BounceSeconds = 0.9f;
+    /// <summary>One bounce: out and back.</summary>
+    private const float BounceSeconds = 0.45f;
     private const float DisabledAlpha = 0.4f;
 
     private static GameObject _root;
@@ -55,6 +56,8 @@ internal static class LevelSelectView
     private static bool? _shownGamepad;
     private static float _scroll;
     private static float _arrowY;
+    private static int _bouncedFor = -1;
+    private static float _bounceStart;
     private static float _pageTime;
     private static Vector2 _lastPointer;
     private static Sprite _fallbackArrow;
@@ -211,7 +214,16 @@ internal static class LevelSelectView
         var target = RowCenter(Rows[selected]);
         _arrowY = _arrow.gameObject.activeSelf ? Mathf.Lerp(_arrowY, target, 1f - Mathf.Exp(-25f * dt)) : target;
         _arrow.gameObject.SetActive(true);
-        var bounce = _style.ArrowBounce * (0.5f - 0.5f * Mathf.Cos(Time.unscaledTime * (2f * Mathf.PI / BounceSeconds)));
+        if (selected != _bouncedFor)
+        {
+            _bouncedFor = selected;
+            _bounceStart = Time.unscaledTime;
+        }
+
+        // Like the title screen: one bounce when the selection moves, unless it's set to bounce always.
+        var bounceTime = Time.unscaledTime - _bounceStart;
+        var bouncing = _style.ArrowBounceAlways || bounceTime < BounceSeconds;
+        var bounce = bouncing ? _style.ArrowBounce * (0.5f - 0.5f * Mathf.Cos(bounceTime * (2f * Mathf.PI / BounceSeconds))) : 0f;
         _arrow.anchoredPosition = new Vector2(Left + bounce, -_arrowY);
 
         // Fade the arrow out with its row when the row scrolls into the list's faded edge.
@@ -241,6 +253,7 @@ internal static class LevelSelectView
         _shownMenu = menu;
         _shownPage = menu.Page;
         _pageTime = 0f;
+        _bouncedFor = -1;
         _lastPointer = input.PointerPosition;
 
         var size = _style.FontSize;

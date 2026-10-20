@@ -31,6 +31,9 @@ internal sealed class MenuStyle
     public Color ArrowColor { get; private set; } = Color.white;
     public float ArrowBounce { get; private set; } = 8f;
 
+    /// <summary>False (the title screen's setting): the arrow bounces once each time the selection moves.</summary>
+    public bool ArrowBounceAlways { get; private set; }
+
     /// <summary>True when this came from the title screen, not the fallback.</summary>
     public bool FromGame { get; private set; }
 
@@ -97,6 +100,7 @@ internal sealed class MenuStyle
                 }
 
                 style.ArrowColor = arrow.activeColor.a > 0f ? arrow.activeColor : Color.white;
+                style.ArrowBounceAlways = arrow.bounceAlways;
                 if (arrow.bouncingArrowXAmplitude > 0f)
                 {
                     style.ArrowBounce = Mathf.Min(arrow.bouncingArrowXAmplitude, 40f);
@@ -106,7 +110,7 @@ internal sealed class MenuStyle
             MelonLogger.Msg($"Menu style from the title screen: font {style.Font.name} {style.FontSize:0.#}, "
                 + $"material {(style.Material == null ? "(none)" : style.Material.name)}, selected {style.Selected}, "
                 + $"not selected {style.NotSelected}, offset {style.SelectedOffsetX:0.#}, transition {style.TransitionSeconds:0.##} s, "
-                + $"arrow {(style.Arrow == null ? "(none)" : $"{style.Arrow.name} {style.ArrowSize}")}, bounce {style.ArrowBounce:0.#}.");
+                + $"arrow {(style.Arrow == null ? "(none)" : $"{style.Arrow.name} {style.ArrowSize}")}, bounce {style.ArrowBounce:0.#}{(style.ArrowBounceAlways ? " always" : " once")}.");
             return style;
         }
         catch (Exception e)
