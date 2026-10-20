@@ -11,6 +11,8 @@ namespace CairnRouteMaker.Editor;
 /// The in-game route editor: a free-flying camera, a brush that paints allow/deny/erase stamps
 /// on rock, start and finish markers, and a level select for jumping around to test. While open, the
 /// game's own input is blocked and devices are read directly (see <see cref="EditorInput"/>).
+/// It has a second mode, freecam: the same camera with a marker instead of the brush, for looking
+/// around and moving Ava, which can't change the route.
 /// </summary>
 internal sealed class RouteEditor
 {
@@ -22,6 +24,9 @@ internal sealed class RouteEditor
 
     /// <summary>The finish takes the brush's size, but no smaller than this, so Ava can't miss it.</summary>
     private const float MinFinishRadius = 1f;
+
+    /// <summary>Radius of the freecam's marker sphere.</summary>
+    private const float MarkerRadius = 0.3f;
 
     /// <summary>A new stamp is laid once the brush has moved this fraction of its radius.</summary>
     private const float StampSpacing = 0.35f;
@@ -58,6 +63,9 @@ internal sealed class RouteEditor
     public LevelSelect LevelSelect { get; } = new();
 
     public bool IsOpen { get; private set; }
+
+    /// <summary>Freecam mode: look around and move Ava, but no editing. Opening always starts here.</summary>
+    public bool Freecam { get; private set; }
     public Route Route { get; private set; } = new();
     public StrokeMode Mode { get; private set; } = StrokeMode.Allow;
     public float Radius { get; private set; } = 0.6f;
@@ -104,8 +112,11 @@ internal sealed class RouteEditor
         _overlay.Visible = true;
         _sawInput = false;
         _openedFrame = Time.frameCount;
+        Input.Reset();
+        // Editing is always a deliberate switch (R3 / F8), so nothing gets changed by accident.
+        Freecam = true;
         IsOpen = true;
-        SetStatus($"Editing route for {Route.ZoneKey}.");
+        SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
     }
 
     public void Close()
@@ -146,14 +157,18 @@ internal sealed class RouteEditor
         SetStatus($"Showing the saved route for {zone}.");
     }
 
-    /// <summary>Open the editor (if needed) with the level select showing.</summary>
-    public void OpenLevelSelect()
+    /// <summary>Switch between editing and freecam, opening in freecam if closed.</summary>
+    public void ToggleFreecam()
     {
-        Open();
-        if (IsOpen)
+        if (!IsOpen)
         {
-            LevelSelect.Open(_storage, _traveler, SetStatus, OnRouteDeleted);
+            Open();
+            return;
         }
+
+        EndStroke();
+        Freecam = !Freecam;
+        SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
     }
 
     /// <summary>
@@ -190,6 +205,8 @@ internal sealed class RouteEditor
 
         if (GameApi.TryTeleportAva(position, start.YawDegrees, out var reason))
         {
+            // Every attempt starts with Ava fresh, whatever the last climb took out of her.
+            GameApi.RestoreAva();
             _overlay.Visible = true;
             SetStatus("Teleported to route start. Climb on!");
         }
@@ -241,6 +258,17 @@ internal sealed class RouteEditor
             return;
         }
 
+        if (Input.ToggleFreecam)
+        {
+            ToggleFreecam();
+        }
+
+        if (Freecam)
+        {
+            UpdateFreecam();
+            return;
+        }
+
         if (Input.CycleBrush)
         {
             Mode = Mode switch { StrokeMode.Allow => StrokeMode.Deny, StrokeMode.Deny => StrokeMode.Erase, _ => StrokeMode.Allow };
@@ -263,17 +291,7 @@ internal sealed class RouteEditor
 
         Radius = Mathf.Clamp(Radius * Input.BrushScale, MinRadius, MaxRadius);
         UpdateCamera();
-        if (Time.unscaledTime >= _nextStreamUpdate)
-        {
-            // Load full-detail scenery where the camera is, not just around Ava.
-            _nextStreamUpdate = Time.unscaledTime + 0.5f;
-            GameApi.StreamAroundCamera();
-        }
-
-        // With a gamepad there's no cursor, so the brush aims at the middle of the screen.
-        var aim = Input.UsingGamepad ? new Vector2(Screen.width * 0.5f, Screen.height * 0.5f) : Input.PointerPosition;
-        var ray = _camera.ScreenPointToRay(new Vector3(aim.x, aim.y, 0f));
-        HasBrushTarget = Physics.Raycast(ray, out var hit, MaxPaintDistance, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore);
+        var hit = Aim();
         if (HasBrushTarget && !Looking)
         {
             _overlay.ShowBrush(hit.point, Radius, Mode);
@@ -307,6 +325,52 @@ internal sealed class RouteEditor
         {
             EndStroke();
         }
+    }
+
+    /// <summary>Fly and aim as in the editor, but the only thing to do at the marker is move Ava there.</summary>
+    private void UpdateFreecam()
+    {
+        UpdateCamera();
+        var hit = Aim();
+        if (HasBrushTarget && !Looking)
+        {
+            _overlay.ShowMarker(hit.point, MarkerRadius);
+        }
+        else
+        {
+            _overlay.HideBrush();
+        }
+
+        if (Input.Teleport && HasBrushTarget)
+        {
+            if (GameApi.TryQuickTeleportAva(hit.point, _yaw, out var reason))
+            {
+                GameApi.RestoreAva();
+                Close();
+                SetStatus("Moved Ava to the marker.");
+            }
+            else
+            {
+                SetStatus(reason);
+            }
+        }
+    }
+
+    /// <summary>Keep scenery streamed in around the camera and find the rock under the cursor.</summary>
+    private RaycastHit Aim()
+    {
+        if (Time.unscaledTime >= _nextStreamUpdate)
+        {
+            // Load full-detail scenery where the camera is, not just around Ava.
+            _nextStreamUpdate = Time.unscaledTime + 0.5f;
+            GameApi.StreamAroundCamera();
+        }
+
+        // With a gamepad there's no cursor, so aim at the middle of the screen.
+        var aim = Input.UsingGamepad ? new Vector2(Screen.width * 0.5f, Screen.height * 0.5f) : Input.PointerPosition;
+        var ray = _camera.ScreenPointToRay(new Vector3(aim.x, aim.y, 0f));
+        HasBrushTarget = Physics.Raycast(ray, out var hit, MaxPaintDistance, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore);
+        return hit;
     }
 
     private void UpdateLevelSelect()

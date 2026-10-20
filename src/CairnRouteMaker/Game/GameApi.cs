@@ -711,6 +711,114 @@ internal static class GameApi
             MelonLogger.Warning("No FreeRoamManager in this game mode; using a direct teleport.");
         }
 
+        return TryDirectTeleport(position, rotation, out reason);
+    }
+
+    /// <summary>
+    /// Move Ava without the warp's loading screen, for short hops: a bare TransitionToMode, used
+    /// only when she's on her feet and the target is in the zone that's already loaded. Anything
+    /// else (climbing, another zone) goes through <see cref="TryTeleportAva"/> and its loading screen.
+    /// </summary>
+    public static bool TryQuickTeleportAva(Vector3 position, float yawDegrees, out string reason)
+    {
+        if (!CanMoveAva(out reason))
+        {
+            return false;
+        }
+
+        var streaming = StreamingManager.Instance;
+        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(position);
+        var sameZone = targetZone != null && streaming.CurrentZone != null && targetZone.name == streaming.CurrentZone.name;
+        if (Switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking || !sameZone)
+        {
+            MelonLogger.Msg($"Quick teleport not possible ({Switcher.CurrentMode}, target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
+            return TryTeleportAva(position, yawDegrees, out reason);
+        }
+
+        return TryDirectTeleport(position, Quaternion.Euler(0f, yawDegrees, 0f), out reason);
+    }
+
+    private static readonly SurvivalStat[] SurvivalStats =
+    {
+        SurvivalStat.Hunger, SurvivalStat.Thirst, SurvivalStat.Cold, SurvivalStat.Exhaustion, SurvivalStat.Hp,
+    };
+
+    /// <summary>
+    /// Put Ava back to full: hunger, thirst, cold, exhaustion and HP refilled (and their critical
+    /// timers stopped), every finger at full health, and each limb's climbing stamina reset.
+    /// Finger tape is left alone.
+    /// </summary>
+    public static void RestoreAva()
+    {
+        try
+        {
+            var data = GameDataManager.Instance;
+            if (data != null)
+            {
+                var before = DescribeStats(data);
+                foreach (var stat in SurvivalStats)
+                {
+                    data.RefillStat(stat);
+                }
+
+                // After the other stats, so whatever caps max HP has been refilled too.
+                data.SetCurrentHp(data.CurrentMaxHp);
+                var climber = data.GameData == null ? null : data.GameData.climberData;
+                if (climber != null)
+                {
+                    foreach (var stat in SurvivalStats)
+                    {
+                        climber.EndCriticalStatTimer(stat);
+                    }
+
+                    var fingers = climber.fingerHP01;
+                    for (var i = 0; fingers != null && i < fingers.Length; i++)
+                    {
+                        climber.SetFingerHealth01(i, 1f, true, false);
+                    }
+                }
+
+                MelonLogger.Msg($"Restored Ava: {before} -> {DescribeStats(data)}.");
+            }
+
+            var climbing = Switcher == null ? null : Switcher.climbingPawnController;
+            if (climbing != null)
+            {
+                foreach (var target in LimbOrder)
+                {
+                    var limb = climbing.GetLimb(target);
+                    if (limb != null)
+                    {
+                        limb.ResetStamina();
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Warning($"Couldn't restore Ava's stats: {e.Message}");
+        }
+    }
+
+    private static string DescribeStats(GameDataManager data)
+    {
+        var parts = new List<string>();
+        foreach (var stat in SurvivalStats)
+        {
+            parts.Add($"{stat} {data.GetStat(stat):0.##}");
+        }
+
+        var climber = data.GameData == null ? null : data.GameData.climberData;
+        if (climber != null)
+        {
+            parts.Add($"fingers {climber.GetAverageFingersHealth01PerHand(false):0.##}");
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    private static bool TryDirectTeleport(Vector3 position, Quaternion rotation, out string reason)
+    {
         var switcher = Switcher;
         if (switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking)
         {

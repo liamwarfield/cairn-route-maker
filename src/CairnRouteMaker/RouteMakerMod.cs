@@ -40,7 +40,7 @@ public sealed class RouteMakerMod : MelonMod
         _launcher = new FreeClimbLauncher(_storage, _session);
         MainMenuPatches.FreeClimbClicked += _launcher.Open;
         LoggerInstance.Msg($"Loaded. Routes are stored in {directory}");
-        LoggerInstance.Msg("Choose Free Climb on the title screen. In free climb: F6 (or L3+R3) route editor, F7 teleport to route start, F8 level select, F9 show/hide route.");
+        LoggerInstance.Msg("Choose Free Climb on the title screen. In free climb: F6 (or L3+R3) route editor, F8 (or R3 in the editor) freecam, F7 teleport to route start, F9 show/hide route.");
     }
 
     public override void OnUpdate()
@@ -159,14 +159,7 @@ public sealed class RouteMakerMod : MelonMod
         else if (keyboard.f8Key.wasPressedThisFrame)
         {
             EnsureEditor();
-            if (_editor.LevelSelect.IsOpen)
-            {
-                _editor.Close();
-            }
-            else
-            {
-                _editor.OpenLevelSelect();
-            }
+            _editor.ToggleFreecam();
         }
         else if (keyboard.f9Key.wasPressedThisFrame && _overlay != null)
         {

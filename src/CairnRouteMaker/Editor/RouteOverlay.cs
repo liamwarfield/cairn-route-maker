@@ -24,6 +24,7 @@ internal sealed class RouteOverlay
     private static readonly Color BrushAllowColor = new(1f, 0.82f, 0.15f, 0.4f);
     private static readonly Color BrushDenyColor = new(0.95f, 0.1f, 0.05f, 0.45f);
     private static readonly Color BrushEraseColor = new(0f, 0f, 0f, 0.55f);
+    private static readonly Color MarkerColor = new(0.9f, 0.95f, 1f, 0.5f);
 
     private readonly GameObject _root;
     private readonly DecalPaint _paint;
@@ -34,6 +35,7 @@ internal sealed class RouteOverlay
     private Material _startMaterial;
     private Material _finishMaterial;
     private Material[] _brushMaterials;
+    private Material _markerMaterial;
     private bool _visible = true;
 
     public RouteOverlay()
@@ -143,6 +145,15 @@ internal sealed class RouteOverlay
         _brush.GetComponent<Renderer>().sharedMaterial = _brushMaterials[(int)mode];
     }
 
+    /// <summary>The freecam's marker: where Ava goes if she's moved. Shares the brush's sphere.</summary>
+    public void ShowMarker(Vector3 position, float radius)
+    {
+        _brush.SetActive(true);
+        _brush.transform.position = position;
+        _brush.transform.localScale = Vector3.one * radius * 2f;
+        _brush.GetComponent<Renderer>().sharedMaterial = _markerMaterial;
+    }
+
     public void HideBrush() => _brush.SetActive(false);
 
     public static Vector3 ToUnity(NVector3 v) => new(v.X, v.Y, v.Z);
@@ -187,6 +198,7 @@ internal sealed class RouteOverlay
         _startMaterial = CreateMaterial(StartColor);
         _finishMaterial = CreateMaterial(FinishColor);
         _brushMaterials = new[] { CreateMaterial(BrushAllowColor), CreateMaterial(BrushDenyColor), CreateMaterial(BrushEraseColor) };
+        _markerMaterial = CreateMaterial(MarkerColor);
     }
 
     private static Shader _shader;

@@ -80,9 +80,17 @@ internal sealed class Traveler
 
         if (_position != null)
         {
-            Finish(GameApi.TryTeleportAva(_position.Value, _yaw, out var reason)
-                ? $"Arrived at {Destination}."
-                : $"Reached {Destination} but couldn't place Ava: {reason}");
+            // A trip to an exact spot is a route start, so Ava arrives fresh as well.
+            if (GameApi.TryTeleportAva(_position.Value, _yaw, out var reason))
+            {
+                GameApi.RestoreAva();
+                Finish($"Arrived at {Destination}.");
+            }
+            else
+            {
+                Finish($"Reached {Destination} but couldn't place Ava: {reason}");
+            }
+
             return;
         }
 
