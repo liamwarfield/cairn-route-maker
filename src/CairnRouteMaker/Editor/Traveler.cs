@@ -17,6 +17,12 @@ internal sealed class Traveler
     /// <summary>After a trip is requested, how long the world may look idle before we call it failed.</summary>
     private const float IdleGraceSeconds = 5f;
 
+    /// <summary>
+    /// After a zone trip, how long Ava must stay in the zone before it counts. The game first drops
+    /// her in 01_FirstRidge for a moment, then puts her at the spawn point.
+    /// </summary>
+    private const float SettleSeconds = 3f;
+
     private StreamingTweakables.World _world;
     private string _zone;
     private Vector3? _position;
@@ -25,6 +31,7 @@ internal sealed class Traveler
     private string _issued;
     private float _stepStarted;
     private float _idleSince = -1f;
+    private float _settledSince = -1f;
 
     public bool IsActive { get; private set; }
 
@@ -41,6 +48,7 @@ internal sealed class Traveler
         _issued = null;
         _stepStarted = Time.unscaledTime;
         _idleSince = -1f;
+        _settledSince = -1f;
         IsActive = true;
     }
 
@@ -63,6 +71,7 @@ internal sealed class Traveler
         {
             // Loading, streaming, or Ava not standing yet: wait.
             _idleSince = -1f;
+            _settledSince = -1f;
             return;
         }
 
@@ -74,8 +83,22 @@ internal sealed class Traveler
 
         if (_zone != null && CurrentZoneName() != _zone)
         {
+            _settledSince = -1f;
             Step("zone", () => GameApi.TryTravelToZone(_zone, out var reason) ? null : reason);
             return;
+        }
+
+        if (_issued == "zone")
+        {
+            if (_settledSince < 0f)
+            {
+                _settledSince = Time.unscaledTime;
+            }
+
+            if (Time.unscaledTime - _settledSince < SettleSeconds)
+            {
+                return;
+            }
         }
 
         if (_position != null)

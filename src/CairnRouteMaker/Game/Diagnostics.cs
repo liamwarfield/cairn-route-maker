@@ -25,6 +25,7 @@ internal static class Diagnostics
                 log.Msg($"Main camera: {camera.name} path={camera.actualRenderingPath} depthMode={camera.depthTextureMode} hdr={camera.allowHDR}");
             }
 
+            log.Msg($"World state:\n{GameApi.DescribeWorldState()}");
             DumpDecals(log);
             DumpShaders(log);
             DumpSurfaceUnderCamera(log, camera);

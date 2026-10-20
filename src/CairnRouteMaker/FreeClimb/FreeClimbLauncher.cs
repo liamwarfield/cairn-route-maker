@@ -7,9 +7,9 @@ using UnityEngine;
 namespace CairnRouteMaker.FreeClimb;
 
 /// <summary>
-/// The menu the title screen's Free Climb button opens: the level select's launcher pages, drawn
-/// over the title screen. Choosing a place starts a free-climb game there. While it's open the
-/// title screen's own input is blocked; devices are read directly.
+/// The menu the title screen's Free Climb button opens: the level select's launcher pages, shown in
+/// place of the title screen's own menu. Choosing a place starts a free-climb game there. While it's
+/// open the title screen's menu is hidden and its input blocked; devices are read directly.
 /// </summary>
 internal sealed class FreeClimbLauncher
 {
@@ -46,9 +46,11 @@ internal sealed class FreeClimbLauncher
         _openedFrame = Time.frameCount;
         _unblockAtFrame = -1;
         GameApi.BlockMenuInput(true);
+        GameApi.HideTitleMenu(true);
     }
 
-    public void Close()
+    /// <param name="showTitleMenu">False when a game is starting: the title screen is going away anyway.</param>
+    public void Close(bool showTitleMenu = true)
     {
         if (!_open)
         {
@@ -57,6 +59,10 @@ internal sealed class FreeClimbLauncher
 
         _open = false;
         _menu.Close();
+        if (showTitleMenu)
+        {
+            GameApi.HideTitleMenu(false);
+        }
         // Next frame: the key that closed the menu mustn't also reach the title screen (B there goes back).
         _unblockAtFrame = Time.frameCount + 1;
     }
@@ -76,6 +82,9 @@ internal sealed class FreeClimbLauncher
         }
 
         _input.Read(Time.unscaledDeltaTime);
+        // Every frame: the title screen fades its own menu in and out with tweens.
+        GameApi.HideTitleMenu(true);
+        LevelSelectView.Show(_menu, _input);
 
         // Skip the frame the menu opened on, or the press that opened it would choose an entry.
         if (Time.frameCount <= _openedFrame)
@@ -108,15 +117,7 @@ internal sealed class FreeClimbLauncher
         }
     }
 
-    public void Draw()
-    {
-        if (_menu.IsOpen)
-        {
-            EditorHud.DrawMenu(_menu, _input.UsingGamepad);
-        }
-
-        EditorHud.DrawStatus(_status, _statusTime);
-    }
+    public void Draw() => EditorHud.DrawStatus(_status, _statusTime);
 
     private void Launch(LevelSelect.LaunchTarget target)
     {
@@ -127,7 +128,7 @@ internal sealed class FreeClimbLauncher
         }
 
         _session.OnLaunched(target.Route);
-        Close();
+        Close(showTitleMenu: false);
     }
 
     private void SetStatus(string message)

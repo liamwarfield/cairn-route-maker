@@ -3,12 +3,10 @@ using UnityEngine;
 
 namespace CairnRouteMaker.Editor;
 
-/// <summary>On-screen help, status, gamepad reticle and the level select / launcher menu, drawn with IMGUI.</summary>
+/// <summary>On-screen help, status and gamepad reticle, drawn with IMGUI. The level select is <see cref="LevelSelectView"/>.</summary>
 internal static class EditorHud
 {
     private const float StatusSeconds = 4f;
-    private const float RowHeight = 24f;
-    private const int VisibleRows = 18;
 
     private const string KeyboardHelp =
         "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
@@ -37,13 +35,9 @@ internal static class EditorHud
 
     public static void Draw(RouteEditor editor)
     {
-        if (editor.IsOpen)
+        if (editor.IsOpen && !editor.LevelSelect.IsOpen)
         {
-            if (editor.LevelSelect.IsOpen)
-            {
-                DrawMenu(editor.LevelSelect, editor.Input.UsingGamepad);
-            }
-            else if (editor.Freecam)
+            if (editor.Freecam)
             {
                 DrawFreecamPanel(editor);
             }
@@ -102,45 +96,6 @@ internal static class EditorHud
         {
             // With a gamepad the brush aims at the middle of the screen.
             GUI.Label(new Rect(Screen.width * 0.5f - 6, Screen.height * 0.5f - 11, 20, 22), "+");
-        }
-    }
-
-    public static void DrawMenu(LevelSelect menu, bool usingGamepad)
-    {
-        var entries = menu.Entries;
-        const float width = 460f;
-        var height = RowHeight * (VisibleRows + 2) + 10;
-        var left = Screen.width / 2f - width / 2f;
-        var top = Screen.height / 2f - height / 2f;
-        var hint = usingGamepad ? "D-pad choose   A go   B back" : "Arrows choose   Enter or click go   Esc back";
-        GUI.Box(new Rect(left, top, width, height), $"{menu.Title}   ({hint})");
-
-        // Keep the highlighted entry in view.
-        var first = Mathf.Clamp(menu.Selected - VisibleRows / 2, 0, Mathf.Max(0, entries.Count - VisibleRows));
-        for (var row = 0; row < VisibleRows && first + row < entries.Count; row++)
-        {
-            var index = first + row;
-            var entry = entries[index];
-            var rect = new Rect(left + 10, top + RowHeight * (row + 1) + 4, width - 20, RowHeight - 2);
-            if (entry.IsHeader)
-            {
-                GUI.Label(rect, $"-- {entry.Label} --");
-            }
-            else if (!entry.Enabled)
-            {
-                GUI.Label(rect, $"      {entry.Label}");
-            }
-            else if (GUI.Button(rect, (index == menu.Selected ? "> " : "   ") + entry.Label))
-            {
-                menu.ClickedIndex = index;
-            }
-        }
-
-        if (entries.Count > VisibleRows)
-        {
-            GUI.Label(
-                new Rect(left + 10, top + height - RowHeight - 2, width - 20, RowHeight),
-                $"{first + 1}-{Mathf.Min(first + VisibleRows, entries.Count)} of {entries.Count}");
         }
     }
 }

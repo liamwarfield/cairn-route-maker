@@ -64,6 +64,7 @@ internal sealed class EditorInput
     public int MenuMove { get; private set; }
     public bool MenuConfirm { get; private set; }
     public bool MenuBack { get; private set; }
+    public bool MenuClick { get; private set; }
 
     /// <summary>L3+R3 on a gamepad: the controller's way to open or close the editor.</summary>
     public static bool GamepadToggleEditor()
@@ -100,7 +101,7 @@ internal sealed class EditorInput
         SelectBrush = null;
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
         MenuMove = 0;
-        MenuConfirm = MenuBack = false;
+        MenuConfirm = MenuBack = MenuClick = false;
 
         if (keyboard != null && mouse != null)
         {
@@ -157,6 +158,8 @@ internal sealed class EditorInput
             if (keyboard.downArrowKey.wasPressedThisFrame || keyboard.sKey.wasPressedThisFrame) MenuMove += 1;
             MenuConfirm |= keyboard.enterKey.wasPressedThisFrame || keyboard.spaceKey.wasPressedThisFrame;
             MenuBack |= keyboard.escapeKey.wasPressedThisFrame || keyboard.lKey.wasPressedThisFrame;
+            MenuClick |= mouse.leftButton.wasPressedThisFrame;
+            if (scroll != 0f) MenuMove += scroll > 0f ? -1 : 1;
             PointerPosition = mouse.position.ReadValue();
         }
 

@@ -18,9 +18,14 @@ internal sealed class FreeClimbSession
 {
     private const float CheckSeconds = 0.5f;
 
+    /// <summary>A launch that hasn't produced Ava after this long gets its world state logged.</summary>
+    private const float SlowLaunchSeconds = 20f;
+
     private readonly Traveler _traveler;
     private Route _pendingRoute;
     private bool _launched;
+    private float _launchedAt;
+    private bool _reportedSlowLaunch;
     private float _nextCheck;
 
     public FreeClimbSession(Traveler traveler)
@@ -39,6 +44,8 @@ internal sealed class FreeClimbSession
     public void OnLaunched(Route route)
     {
         _launched = true;
+        _launchedAt = Time.unscaledTime;
+        _reportedSlowLaunch = false;
         _pendingRoute = route;
     }
 
@@ -62,6 +69,12 @@ internal sealed class FreeClimbSession
 
         if (!GameApi.IsAvaReady)
         {
+            if (_launched && !_reportedSlowLaunch && Time.unscaledTime - _launchedAt > SlowLaunchSeconds)
+            {
+                _reportedSlowLaunch = true;
+                MelonLogger.Warning($"Free climb was launched {SlowLaunchSeconds:0} s ago and Ava still isn't in the world:\n{GameApi.DescribeWorldState()}");
+            }
+
             return;
         }
 

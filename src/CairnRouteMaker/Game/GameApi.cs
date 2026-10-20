@@ -27,6 +27,10 @@ internal static class GameApi
     private static bool _savedMenuDisableInputs;
     private static bool _menuInputBlocked;
     private static readonly List<BaseInputModule> _disabledInputModules = new();
+    private static CanvasGroup _hiddenTitleMenu;
+    private static float _savedTitleMenuAlpha;
+    private static UnityEngine.UI.Image _hiddenTitleArrow;
+    private static bool _savedTitleArrowEnabled;
 
     /// <summary>Rock, holds and ground: what the brush and start marker can land on.</summary>
     public static int SurfaceMask
@@ -371,6 +375,7 @@ internal static class GameApi
         }
 
         var setup = new GameSetup(spawner) { summitMode = true, constraints = FreeClimbConstraints };
+        setup.spawner = SpawnerObjectName(data, zone, spawner.name);
         summit.SelectedWorld = data;
         summit.SelectedZone = zone;
         summit.SelectedSpawner = spawner;
@@ -479,6 +484,66 @@ internal static class GameApi
         return scenes != null && scenes.TryGetWorld(world, out data) && data != null;
     }
 
+    /// <summary>
+    /// For the log: is Ava spawned and where, which zone streaming thinks she and the camera are in,
+    /// the running spawner, the loaded scenes, and the spawners in them.
+    /// </summary>
+    public static string DescribeWorldState()
+    {
+        var lines = new List<string>();
+        void Add(string what, Func<string> read)
+        {
+            try
+            {
+                lines.Add($"  {what}: {read()}");
+            }
+            catch (Exception e)
+            {
+                lines.Add($"  {what}: (unreadable: {e.Message})");
+            }
+        }
+
+        Add("Ava", () => $"spawned={PawnManager.MCSpawned} switcher={(Switcher == null ? "none" : Switcher.CurrentMode.ToString())} at {AvaPosition?.ToString() ?? "(not in the world)"}");
+        Add("camera", () => Camera.main == null ? "(none)" : $"{Camera.main.name} at {Camera.main.transform.position}");
+        Add("streaming", () =>
+        {
+            var streaming = StreamingManager.Instance;
+            return streaming == null ? "(no manager)"
+                : $"world={(streaming.World == null ? "none" : streaming.World.WorldId.ToString())} zone={streaming.CurrentZone?.name ?? "none"} "
+                + $"cameraZone={streaming.CurrentCameraZone?.name ?? "none"} preloading={streaming.PreloadingZone?.name ?? "none"}";
+        });
+        Add("scenes", () =>
+        {
+            var scenes = CairnSceneManager.Instance;
+            return scenes == null ? "(no manager)"
+                : $"busy={scenes.IsBusy()} travelling={scenes.IsTraveling} streamingForCamera={scenes.isStreamingForCamera} "
+                + $"loading={scenes.ScenesLoadingCount} unloading={scenes.ScenesUnloadingCount} spawner={scenes.GameSetup?.spawner ?? "none"}";
+        });
+        Add("loaded scenes", () =>
+        {
+            var names = new List<string>();
+            for (var i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                names.Add(scene.isLoaded ? scene.name : $"{scene.name} (loading)");
+            }
+
+            return $"{names.Count}: {string.Join(", ", names)}";
+        });
+        Add("spawners", () =>
+        {
+            var spawners = Object.FindObjectsByType<SpawnerMC>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var names = new List<string>();
+            foreach (var spawner in spawners)
+            {
+                names.Add($"{spawner.name}{(spawner.gameObject.activeInHierarchy ? "" : " (inactive)")} at {spawner.transform.position}");
+            }
+
+            return names.Count == 0 ? "none loaded" : string.Join("; ", names);
+        });
+        return string.Join("\n", lines);
+    }
+
     /// <summary>Loading, streaming or travelling: not a moment to start another trip.</summary>
     public static bool IsWorldBusy
     {
@@ -529,6 +594,7 @@ internal static class GameApi
         {
             if (zone.name == zoneName)
             {
+                RespawnInZone(zone);
                 CairnSceneManager.Instance.TravelToZone(zone, streaming.World);
                 return true;
             }
@@ -536,6 +602,67 @@ internal static class GameApi
 
         reason = $"No zone called {zoneName} in {streaming.World.WorldId}.";
         return false;
+    }
+
+    /// <summary>
+    /// TravelToZone loads the zone but doesn't place Ava, and a Summit-mode game (free climb) then
+    /// puts her back at its setup's spawner: the zone she started in. Pointing the setup at the
+    /// destination's first spawn point makes that land her there instead (and later respawns too):
+    /// SpawnerMC.OnRestartLevel moves her to the spawner named in GameSetup.GetCurrentGameSetup().
+    /// Zones without spawn points keep the old spawner.
+    /// </summary>
+    private static void RespawnInZone(ZoneSceneData zone)
+    {
+        var scenes = CairnSceneManager.Instance;
+        var setup = scenes.GameSetup;
+        if (setup == null || !setup.summitMode || zone.spawnersForMainMenu == null || zone.spawnersForMainMenu.Count == 0)
+        {
+            MelonLogger.Msg($"Travelling to {zone.name} without changing the spawn point ({(setup == null ? "no game setup" : $"spawner {setup.spawner}")}).");
+            return;
+        }
+
+        var spawner = SpawnerObjectName(StreamingManager.Instance.World, zone, zone.spawnersForMainMenu[0].name);
+        MelonLogger.Msg($"Spawn point for the trip: {setup.spawner} -> {spawner}.");
+        // GameSetup is a struct: this is a copy, so it has to be stored back.
+        setup.spawner = spawner;
+        scenes.GameSetup = setup;
+        MelonLogger.Msg($"The game's spawn point is now {scenes.GameSetup.spawner}.");
+    }
+
+    /// <summary>
+    /// The name of the spawner object a listed spawn point means. Ava spawns at the loaded SpawnerMC
+    /// whose name matches GameSetup.spawner, and a few listed names are stale: 26_LastBridge lists
+    /// SpawnerMC_Kami_24_LastBridge, but its object is SpawnerMC_Kami_26_LastBridge. With no match
+    /// she never spawns and the camera sits at the origin, which only shows the distant (_LOD) scenes.
+    /// A name that points at no zone of the world is taken to mean this zone's spawner.
+    /// </summary>
+    private static string SpawnerObjectName(WorldZoneData world, ZoneSceneData zone, string listed)
+    {
+        var prefix = world == null ? null : $"SpawnerMC_{world.WorldId}_";
+        if (prefix == null || listed == null || !listed.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return listed;
+        }
+
+        // "SpawnerMC_Kami_20_SpecialDome (4)" names the zone 20_SpecialDome.
+        var named = listed.Substring(prefix.Length);
+        var space = named.IndexOf(' ');
+        if (space >= 0)
+        {
+            named = named[..space];
+        }
+
+        foreach (var candidate in world.zones)
+        {
+            if (candidate != null && candidate.name == named)
+            {
+                return listed;
+            }
+        }
+
+        var corrected = prefix + zone.name;
+        MelonLogger.Msg($"The spawn point {listed} names no zone of {world.WorldId}; using {corrected}.");
+        return corrected;
     }
 
     public static bool TryTravelToWorld(StreamingTweakables.World world, out string reason)
@@ -638,6 +765,51 @@ internal static class GameApi
         }
 
         _menuInputBlocked = block;
+    }
+
+    /// <summary>
+    /// Hide the title screen's buttons and bouncing arrow while our menu stands in for them (it
+    /// copies their look and sits in the same place). The scene behind stays.
+    /// </summary>
+    public static void HideTitleMenu(bool hide)
+    {
+        if (hide)
+        {
+            if (_hiddenTitleMenu == null)
+            {
+                var element = Object.FindFirstObjectByType<MainMenuModeSelectElement>();
+                if (element == null || element.group == null)
+                {
+                    return;
+                }
+
+                _hiddenTitleMenu = element.group;
+                _savedTitleMenuAlpha = _hiddenTitleMenu.alpha;
+                _hiddenTitleArrow = element.mainMenu?.bouncingArrow?.image;
+                _savedTitleArrowEnabled = _hiddenTitleArrow != null && _hiddenTitleArrow.enabled;
+            }
+
+            _hiddenTitleMenu.alpha = 0f;
+            if (_hiddenTitleArrow != null)
+            {
+                _hiddenTitleArrow.enabled = false;
+            }
+
+            return;
+        }
+
+        if (_hiddenTitleMenu != null)
+        {
+            _hiddenTitleMenu.alpha = _savedTitleMenuAlpha;
+        }
+
+        if (_hiddenTitleArrow != null)
+        {
+            _hiddenTitleArrow.enabled = _savedTitleArrowEnabled;
+        }
+
+        _hiddenTitleMenu = null;
+        _hiddenTitleArrow = null;
     }
 
     /// <summary>
