@@ -39,6 +39,16 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
   2. If the target is in another zone (`StreamingManager.Instance.GetBestZoneAt(pos)` differs from `CurrentZone`), call `CairnSceneManager.Instance.TravelToZone`, then wait for loading to finish.
   3. Write the transform directly and repeat until Ava stays put.
 
+## Survival stats and fingers (restoring Ava)
+
+- `SurvivalStat` enum: `Hunger`, `Thirst`, `Cold`, `Hp`, `Exhaustion`. **sig**
+- `GameDataManager.Instance` has `RefillStat(stat)`, `GetStat(stat)`, `SetCurrentHp(value)`, `CurrentMaxHp` and `AbsoluteMaxHp`. Max HP can be eroded below the absolute max. **sig**; whether `RefillStat(Exhaustion)` clears exhaustion is a **guess** (the mod logs the values before and after).
+- `GameDataManager.GameData.climberData` (`ClimberData`):
+  - `fingerHP01` (one 0-1 value per finger) and `SetFingerHealth01(fingerIndex, health01, ignoreCooldown, useTapingMultiplier)`.
+  - `EndCriticalStatTimer(stat)` stops a stat's pass-out countdown. **sig**
+- Climbing stamina is per limb: `ClimbingV2PawnLimb.ResetStamina()`. **sig**
+- `GameDataManager.ResetSurvivalValues()` / `ResetStats()` also exist. They aren't used because what else they reset is unknown.
+
 ## Limb attach (route scoring)
 
 - `ClimbingV2PawnController.limbs` / `hands` / `feet` / `GetLimb(IKLimbTarget)`. **sig**

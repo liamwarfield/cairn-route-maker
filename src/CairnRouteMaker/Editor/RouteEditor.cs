@@ -64,7 +64,7 @@ internal sealed class RouteEditor
 
     public bool IsOpen { get; private set; }
 
-    /// <summary>Freecam mode: look around and move Ava, but no editing. Kept between openings.</summary>
+    /// <summary>Freecam mode: look around and move Ava, but no editing. Opening always starts here.</summary>
     public bool Freecam { get; private set; }
     public Route Route { get; private set; } = new();
     public StrokeMode Mode { get; private set; } = StrokeMode.Allow;
@@ -113,6 +113,8 @@ internal sealed class RouteEditor
         _sawInput = false;
         _openedFrame = Time.frameCount;
         Input.Reset();
+        // Editing is always a deliberate switch (R3 / F8), so nothing gets changed by accident.
+        Freecam = true;
         IsOpen = true;
         SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
     }
@@ -160,7 +162,6 @@ internal sealed class RouteEditor
     {
         if (!IsOpen)
         {
-            Freecam = true;
             Open();
             return;
         }
@@ -204,6 +205,8 @@ internal sealed class RouteEditor
 
         if (GameApi.TryTeleportAva(position, start.YawDegrees, out var reason))
         {
+            // Every attempt starts with Ava fresh, whatever the last climb took out of her.
+            GameApi.RestoreAva();
             _overlay.Visible = true;
             SetStatus("Teleported to route start. Climb on!");
         }
@@ -342,6 +345,7 @@ internal sealed class RouteEditor
         {
             if (GameApi.TryQuickTeleportAva(hit.point, _yaw, out var reason))
             {
+                GameApi.RestoreAva();
                 Close();
                 SetStatus("Moved Ava to the marker.");
             }
