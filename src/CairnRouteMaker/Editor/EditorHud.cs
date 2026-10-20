@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace CairnRouteMaker.Editor;
 
-/// <summary>On-screen help, status, gamepad reticle and the level select, drawn with IMGUI.</summary>
+/// <summary>On-screen help, status, gamepad reticle and the level select / launcher menu, drawn with IMGUI.</summary>
 internal static class EditorHud
 {
     private const float StatusSeconds = 4f;
@@ -30,7 +30,7 @@ internal static class EditorHud
         {
             if (editor.LevelSelect.IsOpen)
             {
-                DrawLevelSelect(editor);
+                DrawMenu(editor.LevelSelect, editor.Input.UsingGamepad);
             }
             else
             {
@@ -38,9 +38,15 @@ internal static class EditorHud
             }
         }
 
-        if (editor.Status != null && Time.unscaledTime - editor.StatusTime < StatusSeconds)
+        DrawStatus(editor.Status, editor.StatusTime);
+    }
+
+    /// <summary>A status line near the bottom of the screen, shown for a few seconds after it was set.</summary>
+    public static void DrawStatus(string status, float since)
+    {
+        if (status != null && Time.unscaledTime - since < StatusSeconds)
         {
-            GUI.Box(new Rect(Screen.width / 2f - 250, Screen.height - 90, 500, 28), editor.Status);
+            GUI.Box(new Rect(Screen.width / 2f - 250, Screen.height - 90, 500, 28), status);
         }
     }
 
@@ -70,15 +76,14 @@ internal static class EditorHud
         }
     }
 
-    private static void DrawLevelSelect(RouteEditor editor)
+    public static void DrawMenu(LevelSelect menu, bool usingGamepad)
     {
-        var menu = editor.LevelSelect;
         var entries = menu.Entries;
         const float width = 460f;
         var height = RowHeight * (VisibleRows + 2) + 10;
         var left = Screen.width / 2f - width / 2f;
         var top = Screen.height / 2f - height / 2f;
-        var hint = editor.Input.UsingGamepad ? "D-pad choose   A go   B back" : "Arrows choose   Enter or click go   Esc back";
+        var hint = usingGamepad ? "D-pad choose   A go   B back" : "Arrows choose   Enter or click go   Esc back";
         GUI.Box(new Rect(left, top, width, height), $"{menu.Title}   ({hint})");
 
         // Keep the highlighted entry in view.

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using CairnRouteMaker.Climbing;
 using CairnRouteMaker.Editor;
+using CairnRouteMaker.FreeClimb;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using MelonLoader;
@@ -13,6 +14,10 @@ using UnityEngine.InputSystem;
 
 namespace CairnRouteMaker;
 
+/// <summary>
+/// Entry point. The title screen gets a Free Climb button that opens the launcher; the editor,
+/// free camera, teleports and route overlay only work inside a free-climb game, never in story.
+/// </summary>
 public sealed class RouteMakerMod : MelonMod
 {
     private RouteStorage _storage;
@@ -20,6 +25,8 @@ public sealed class RouteMakerMod : MelonMod
     private RouteEditor _editor;
     private readonly Traveler _traveler = new();
     private readonly AttemptTracker _attempt = new();
+    private FreeClimbSession _session;
+    private FreeClimbLauncher _launcher;
     private string _lastZone;
     private float _nextZoneCheck;
 
@@ -27,19 +34,31 @@ public sealed class RouteMakerMod : MelonMod
     {
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
+        _session = new FreeClimbSession(_traveler);
+        _session.Started += OnFreeClimbStarted;
+        _session.Ended += OnFreeClimbEnded;
+        _launcher = new FreeClimbLauncher(_storage, _session);
+        MainMenuPatches.FreeClimbClicked += _launcher.Open;
         LoggerInstance.Msg($"Loaded. Routes are stored in {directory}");
-        LoggerInstance.Msg("F6 (or L3+R3) route editor, F7 teleport to route start, F8 level select, F9 show/hide route.");
+        LoggerInstance.Msg("Choose Free Climb on the title screen. In free climb: F6 (or L3+R3) route editor, F7 teleport to route start, F8 level select, F9 show/hide route.");
     }
 
     public override void OnUpdate()
     {
         try
         {
-            LogZoneChanges();
-            HandleHotkeys();
-            _editor?.Update();
-            _traveler.Update();
-            UpdateAttempt();
+            _launcher.Update();
+            _session.Update();
+            HandleDiagnosticsKey();
+            if (_session.IsActive)
+            {
+                LogZoneChanges();
+                HandleHotkeys();
+                _editor?.Update();
+                _traveler.Update();
+                UpdateAttempt();
+            }
+
             _overlay?.Flush();
         }
         catch (Exception e)
@@ -53,12 +72,13 @@ public sealed class RouteMakerMod : MelonMod
 
     public override void OnGUI()
     {
-        if (_editor != null)
+        _launcher.Draw();
+        if (_editor != null && _session.IsActive)
         {
             EditorHud.Draw(_editor);
         }
 
-        if (_editor is { IsOpen: false })
+        if (_session.IsActive && _editor is { IsOpen: false })
         {
             AttemptHud.Draw(_attempt);
         }
@@ -74,6 +94,41 @@ public sealed class RouteMakerMod : MelonMod
         }
 
         _attempt.Update(_editor.Route);
+    }
+
+    private void OnFreeClimbStarted()
+    {
+        // Pick up the starting zone's route as if Ava had just walked into it.
+        _lastZone = null;
+        _nextZoneCheck = 0f;
+        if (_overlay != null)
+        {
+            _overlay.Visible = true;
+        }
+    }
+
+    private void OnFreeClimbEnded()
+    {
+        _editor?.Close();
+        _traveler.Cancel();
+        _attempt.Reset();
+        if (_overlay != null)
+        {
+            // The overlay outlives scenes, so it must be hidden by hand.
+            _overlay.Visible = false;
+        }
+
+        _lastZone = null;
+    }
+
+    /// <summary>F10 logs game internals anywhere, menus and story included: it only writes to the log.</summary>
+    private void HandleDiagnosticsKey()
+    {
+        var keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.f10Key.wasPressedThisFrame)
+        {
+            Diagnostics.Dump();
+        }
     }
 
     private void HandleHotkeys()
@@ -116,10 +171,6 @@ public sealed class RouteMakerMod : MelonMod
         else if (keyboard.f9Key.wasPressedThisFrame && _overlay != null)
         {
             _overlay.Visible = !_overlay.Visible;
-        }
-        else if (keyboard.f10Key.wasPressedThisFrame)
-        {
-            Diagnostics.Dump();
         }
     }
 

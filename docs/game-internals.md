@@ -163,3 +163,29 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
   - The shader computes `d = dot(gbufferNormal, normalize(-boxLocalY))`. It discards pixels where `d < _NormalsFadeThreshold`, then fades in over `_NormalsFadeSmoothness` with a smoothstep.
   - Because the axis is `-boxLocalY`, a decal using the fade needs local **+Y pointing into the surface**. Pointing it outward discards everything.
   - The UV still comes from local X and Z, so read the u/v world directions back from the box rotation.
+
+## Main menu and starting a game
+
+Read from the interop assemblies (`Il2CppTheGameBakers.Cairn.Global.dll`) and by disassembly. The free-climb launch and the input notes below are confirmed in game.
+
+- **Title screen:** `TheGameBakers.Cairn.UI.MainMenuModeSelectElement`, a `MainMenuElement`.
+  - It has one `Button` field per entry: `storyModeButton`, `summitModeButton`, `settingsButton`, `extrasButton`, `creditsButton`, `steamPageButton`, `quitButton`. Clicks are wired up in its `Awake`.
+  - The base class gets the element's buttons from the virtual `GetButtons()` (`Button[]`) for navigation, the selection offset and colour, and the bouncing arrow. `Initialize()` records `basePositions` and `textMeshes` from it.
+  - Button labels use `Il2Cpp.LocalizedText`, which rewrites the `TextMeshProUGUI` text.
+- **Screens:** `MainMenu.TransitionToStep(MainMenu.Step)`. Confirmed by disassembly (`GameAssembly.dll`, RVA `0x32A5F40`):
+  - It returns without doing anything while `isAnimating` or `isDownloadingPreviews` is set, or while `demoPopUp` is showing.
+  - It stores `EventSystem.current.currentSelectedGameObject` as `lastConfirmedElement`, so it **throws if `EventSystem.current` is null**. To block menu input, disable the event system's input modules, not the `EventSystem` itself.
+  - Cpp2IL's stub DLLs under `MelonLoader/Dependencies/Il2CppAssemblyGenerator/Cpp2IL/cpp2il_out` have `[Address(RVA=…)]` on methods and `[FieldOffset]` on fields. With those, `objdump -d -M intel --start-address=0x180000000+RVA GameAssembly.dll` shows the real code.
+- **Cancel (B / Esc):** `MainMenuElement.Cancel_performed` is an Input System action callback, so turning off UI input modules doesn't stop it. It calls the virtual `OnCancel` when the element is shown and `CanCancel` is true. On the title screen, `OnCancel` is `RequestTransitionTo(PressStart)`.
+- **Step list:** `Step` is a fixed enum (`ModeSelect`, `StoryModeManageSave`, `SummitModeWorldSelect` … `SummitModeConfirm`, `LaunchNewSummitGame`, `LaunchSavedGame`, …).
+- **Summit selection:** `SummitMenu` holds `SelectedWorld` (`WorldZoneData`), `SelectedZone` (`ZoneSceneData`), `SelectedSpawner` (`ZoneSceneData.SpawnerInfo`) and `GameSetup`.
+  - Spawn points come from `ZoneSceneData.spawnersForMainMenu`.
+  - `WorldZoneData.IsSelectableForSummitMode` marks the worlds Summit offers.
+- **`GameSetup`:** `spawner`, `summitMode`, and `constraints`, a `GamemodeConstraints` flag set: `PermaDeath`, `NoStory`, `NoClimbot`, `MeaninglessDeath`, `NoBoosts`, `NoPhysiologicalNeeds`, `NoTutorials`, `CanWarp`, `NoAssistMode`.
+  - `GetSaveType()` returns `SaveType.Story` or `SaveType.Summit`.
+  - The running setup is `CairnSceneManager.Instance.GameSetup`.
+- **Save slots:** saves are kept per type, under `Saved Games/TheGameBakers/Cairn_RETAIL/SAVEGAMES/RETAIL/{STORY,SUMMIT,DEV}/SLOT_*.CPK` in the Proton prefix.
+- **Leaderboards:** `GameEventManager.Cheats()` raises `OnCheat`. That marks the run (`ClimbingStatistics.DeclareCheating`, `PathRecorder.IsCheating`), and scoreboard requests leave cheating records out by default (`ScoreboardRequest.includeCheatingRecords`).
+- **Free climb (this mod):**
+  - The mod fills in `SummitMenu` with a `GameSetup(spawner)` that has `summitMode = true` and `NoStory | NoTutorials | NoPhysiologicalNeeds | CanWarp | MeaninglessDeath`, then calls `TransitionToStep(LaunchNewSummitGame)`.
+  - A game is free climb only while the running setup has exactly those rules.
