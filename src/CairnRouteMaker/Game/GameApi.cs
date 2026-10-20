@@ -533,6 +533,7 @@ internal static class GameApi
         {
             if (zone.name == zoneName)
             {
+                RespawnInZone(zone);
                 CairnSceneManager.Instance.TravelToZone(zone, streaming.World);
                 return true;
             }
@@ -540,6 +541,31 @@ internal static class GameApi
 
         reason = $"No zone called {zoneName} in {streaming.World.WorldId}.";
         return false;
+    }
+
+    /// <summary>
+    /// TravelToZone loads the zone but doesn't place Ava, and a Summit-mode game (free climb) then
+    /// puts her back at its setup's spawner: the zone she started in. Pointing the setup at the
+    /// destination's first spawn point makes that land her there instead (and later respawns too):
+    /// SpawnerMC.OnRestartLevel moves her to the spawner named in GameSetup.GetCurrentGameSetup().
+    /// Zones without spawn points keep the old spawner.
+    /// </summary>
+    private static void RespawnInZone(ZoneSceneData zone)
+    {
+        var scenes = CairnSceneManager.Instance;
+        var setup = scenes.GameSetup;
+        if (setup == null || !setup.summitMode || zone.spawnersForMainMenu == null || zone.spawnersForMainMenu.Count == 0)
+        {
+            MelonLogger.Msg($"Travelling to {zone.name} without changing the spawn point ({(setup == null ? "no game setup" : $"spawner {setup.spawner}")}).");
+            return;
+        }
+
+        var spawner = zone.spawnersForMainMenu[0];
+        MelonLogger.Msg($"Spawn point for the trip: {setup.spawner} -> {spawner.name}.");
+        // GameSetup is a struct: this is a copy, so it has to be stored back.
+        setup.spawner = spawner.name;
+        scenes.GameSetup = setup;
+        MelonLogger.Msg($"The game's spawn point is now {scenes.GameSetup.spawner}.");
     }
 
     public static bool TryTravelToWorld(StreamingTweakables.World world, out string reason)

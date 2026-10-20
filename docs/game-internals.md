@@ -200,3 +200,6 @@ Read from the interop assemblies (`Il2CppTheGameBakers.Cairn.Global.dll`) and by
 - **Free climb (this mod):**
   - The mod fills in `SummitMenu` with a `GameSetup(spawner)` that has `summitMode = true` and `NoStory | NoTutorials | NoPhysiologicalNeeds | CanWarp | MeaninglessDeath`, then calls `TransitionToStep(LaunchNewSummitGame)`.
   - A game is free climb only while the running setup has exactly those rules.
+  - **Zone trips:** `CairnSceneManager.TravelToZone` loads the zone but doesn't place Ava. In a free-climb game she shows up in `01_FirstRidge` for a moment, then goes back to the setup's spawner, which is the zone the game started in. The zone load (`<LoadMountainZoneAndReleaseHandle>d__137.MoveNext`) calls `GameEventManager.RestartLevel`, and `SpawnerMC.OnRestartLevel` moves Ava to the loaded spawner whose name matches `GameSetup.GetCurrentGameSetup().spawner`. That reads `CairnSceneManager.GameSetup`.
+    - `GameSetup` is a **struct** (`spawner` at offset 0, stored inline at `CairnSceneManager+0x80`). Reading the property from a mod gives a copy, so a change has to be assigned back.
+    - `spawner` is the spawner's **name** (a string). The mod sets it to the destination's first `spawnersForMainMenu` entry before travelling.
