@@ -95,13 +95,7 @@ internal static class GameApi
     /// <returns>False, leaving the array alone, unless Ava is climbing.</returns>
     public static bool TryReadGrips(LimbGrip[] grips)
     {
-        var switcher = Switcher;
-        if (switcher == null || switcher.CurrentMode != PawnControllerSwitcher.Mode.Climbing)
-        {
-            return false;
-        }
-
-        var controller = switcher.climbingPawnController;
+        var controller = ClimbingController;
         if (controller == null)
         {
             return false;
@@ -116,6 +110,56 @@ internal static class GameApi
         }
 
         return true;
+    }
+
+    /// <summary>Where the limb Ava is moving would attach if the player let go now.</summary>
+    /// <param name="Limb">Index in the order <see cref="TryReadGrips"/> uses.</param>
+    /// <param name="FromGame">
+    /// True when this is the game's own pick (the limb's next best grab), false when it's only the
+    /// closest rock to the limb because the game hasn't picked a hold yet.
+    /// </param>
+    public readonly record struct NextGrab(int Limb, Vector3 Point, bool FromGame);
+
+    /// <summary>The grab the reaching hand or foot is heading for, if Ava is climbing and moving one.</summary>
+    public static bool TryReadNextGrab(out NextGrab next)
+    {
+        next = default;
+        var controller = ClimbingController;
+        ClimbingV2PawnLimb limb = null;
+        if (controller == null || !controller.GetReachingLimb(out limb) || limb == null)
+        {
+            return false;
+        }
+
+        var index = (int)limb.limb;
+        var pose = limb.poseHandler;
+        var grab = pose == null ? null : pose.nextBestGrab;
+        if (grab != null && grab.isValid)
+        {
+            next = new NextGrab(index, grab.anchorPosition, true);
+            return true;
+        }
+
+        var wall = limb.currentClosestWallHit;
+        if (wall.collider == null)
+        {
+            return false;
+        }
+
+        next = new NextGrab(index, wall.point, false);
+        return true;
+    }
+
+    /// <summary>The climbing controller, or null unless Ava is climbing.</summary>
+    private static ClimbingV2PawnController ClimbingController
+    {
+        get
+        {
+            var switcher = Switcher;
+            return switcher == null || switcher.CurrentMode != PawnControllerSwitcher.Mode.Climbing
+                ? null
+                : switcher.climbingPawnController;
+        }
     }
 
     /// <summary>"World/Zone", or null outside the game world (menus, loading).</summary>
