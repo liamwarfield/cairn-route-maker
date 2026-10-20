@@ -9,7 +9,7 @@ using MelonLoader;
 using MelonLoader.Utils;
 using UnityEngine.InputSystem;
 
-[assembly: MelonInfo(typeof(CairnRouteMaker.RouteMakerMod), "Cairn Route Maker", "0.1.0", "Liam Warfield")]
+[assembly: MelonInfo(typeof(CairnRouteMaker.RouteMakerMod), "Cairn Route Maker", "0.2.0", "Liam Warfield")]
 [assembly: MelonGame("TheGameBakers", "Cairn")]
 
 namespace CairnRouteMaker;
