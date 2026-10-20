@@ -167,7 +167,7 @@ internal sealed class LevelSelect
             Add(new Entry($"Zones in {currentWorld}", true, false, null));
             foreach (var zone in GameApi.ZonesInCurrentWorld())
             {
-                var note = zone.IsCurrent ? "you are here" : zone.IsDiscovered ? null : "not discovered yet";
+                var note = zone.IsCurrent ? "you are here" : null;
                 var name = zone.Name;
                 Add(new Entry(ZoneNames.Pretty(name), false, !zone.IsCurrent, () => _traveler.Start(currentWorld, name, null, 0f, _report), leavesEditor: true, note: note));
             }
@@ -177,7 +177,7 @@ internal sealed class LevelSelect
         foreach (var world in GameApi.Worlds())
         {
             // Locked worlds are allowed on purpose: this is a mapping tool, not a playthrough.
-            var note = world.IsCurrent ? "you are here" : world.IsUnlocked ? null : "not unlocked in this save";
+            var note = world.IsCurrent ? "you are here" : null;
             var id = world.Id;
             Add(new Entry(id.ToString(), false, !world.IsCurrent, () => _traveler.Start(id, null, null, 0f, _report), leavesEditor: true, note: note));
         }
@@ -208,8 +208,7 @@ internal sealed class LevelSelect
         {
             // Locked worlds are allowed on purpose, as in the in-game level select.
             var id = world.Id;
-            var note = world.IsUnlocked ? null : "not unlocked in your story";
-            Add(new Entry(id.ToString(), false, GameApi.LaunchableZones(id).Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id)), note: note));
+            Add(new Entry(id.ToString(), false, GameApi.LaunchableZones(id).Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id))));
         }
 
         End();
