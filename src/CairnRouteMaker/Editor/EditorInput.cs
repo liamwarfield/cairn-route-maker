@@ -11,6 +11,8 @@ namespace CairnRouteMaker.Editor;
 ///   left stick move, right stick look, LB/RB down/up, hold LT fast,
 ///   RT paint, X cycle brush, D-pad up/down brush size, Y set start, A set finish,
 ///   View undo, D-pad right save, Menu play-test, D-pad left level select, B close.
+///   In freecam: A moves Ava to the marker; editing controls do nothing.
+///   R3 on its own switches between editing and freecam.
 ///   L3+R3 opens and closes the editor from anywhere (handled by the mod, not here).
 /// With a gamepad the brush aims at the centre of the screen.
 /// </summary>
@@ -24,6 +26,10 @@ internal sealed class EditorInput
     private const float AltMultiplier = 4f;
     private const float StickLookSpeed = 140f;
     private const float MouseLookSensitivity = 0.12f;
+
+    // R3 switches modes on release, so pressing it as half of L3+R3 doesn't also switch.
+    private bool _rightStickDown;
+    private bool _rightStickCombo;
 
     /// <summary>True once the gamepad was the last device touched; switches the brush to screen-centre aiming.</summary>
     public bool UsingGamepad { get; private set; }
@@ -51,6 +57,8 @@ internal sealed class EditorInput
     public bool PlayTest { get; private set; }
     public bool Close { get; private set; }
     public bool LevelSelect { get; private set; }
+    public bool Teleport { get; private set; }
+    public bool ToggleFreecam { get; private set; }
 
     // Menu navigation (level select).
     public int MenuMove { get; private set; }
@@ -64,6 +72,13 @@ internal sealed class EditorInput
         return pad != null
             && ((pad.leftStickButton.wasPressedThisFrame && pad.rightStickButton.isPressed)
                 || (pad.rightStickButton.wasPressedThisFrame && pad.leftStickButton.isPressed));
+    }
+
+    /// <summary>Forget held buttons from before the editor opened.</summary>
+    public void Reset()
+    {
+        _rightStickDown = false;
+        _rightStickCombo = false;
     }
 
     public void Read(float dt)
@@ -83,7 +98,7 @@ internal sealed class EditorInput
 
         CycleBrush = false;
         SelectBrush = null;
-        SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = false;
+        SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
         MenuMove = 0;
         MenuConfirm = MenuBack = false;
 
@@ -118,6 +133,7 @@ internal sealed class EditorInput
             paintHeld |= mouse.leftButton.isPressed && !looking;
             paintPressed |= mouse.leftButton.wasPressedThisFrame && !looking;
             paintReleased |= mouse.leftButton.wasReleasedThisFrame;
+            Teleport |= mouse.leftButton.wasPressedThisFrame && !looking;
 
             var scroll = mouse.scroll.ReadValue().y;
             if (scroll != 0f) brushScale *= scroll > 0f ? 1.1f : 1f / 1.1f;
@@ -133,7 +149,7 @@ internal sealed class EditorInput
             Undo |= ctrl && keyboard.zKey.wasPressedThisFrame;
             Save |= ctrl && keyboard.sKey.wasPressedThisFrame;
             PlayTest |= keyboard.pKey.wasPressedThisFrame;
-            // F6 and F8 are handled by the mod itself, so they work with the editor closed too.
+            // F6 and F8 (freecam) are handled by the mod itself, so they work with the editor closed too.
             Close |= keyboard.escapeKey.wasPressedThisFrame;
             LevelSelect |= keyboard.lKey.wasPressedThisFrame;
 
@@ -170,11 +186,29 @@ internal sealed class EditorInput
             CycleBrush |= pad.buttonWest.wasPressedThisFrame;
             SetStart |= pad.buttonNorth.wasPressedThisFrame;
             SetFinish |= pad.buttonSouth.wasPressedThisFrame;
+            Teleport |= pad.buttonSouth.wasPressedThisFrame;
             Undo |= pad.selectButton.wasPressedThisFrame;
             Save |= pad.dpad.right.wasPressedThisFrame;
             PlayTest |= pad.startButton.wasPressedThisFrame;
             Close |= pad.buttonEast.wasPressedThisFrame;
             LevelSelect |= pad.dpad.left.wasPressedThisFrame;
+
+            if (pad.rightStickButton.wasPressedThisFrame)
+            {
+                _rightStickDown = true;
+                _rightStickCombo = false;
+            }
+
+            if (_rightStickDown && pad.leftStickButton.isPressed)
+            {
+                _rightStickCombo = true;
+            }
+
+            if (pad.rightStickButton.wasReleasedThisFrame)
+            {
+                ToggleFreecam |= _rightStickDown && !_rightStickCombo;
+                _rightStickDown = false;
+            }
 
             if (pad.dpad.up.wasPressedThisFrame || pad.leftStick.up.wasPressedThisFrame) MenuMove -= 1;
             if (pad.dpad.down.wasPressedThisFrame || pad.leftStick.down.wasPressedThisFrame) MenuMove += 1;
@@ -198,5 +232,6 @@ internal sealed class EditorInput
         pad.buttonSouth.isPressed || pad.buttonEast.isPressed || pad.buttonWest.isPressed || pad.buttonNorth.isPressed
         || pad.leftShoulder.isPressed || pad.rightShoulder.isPressed || pad.leftTrigger.isPressed || pad.rightTrigger.isPressed
         || pad.dpad.up.isPressed || pad.dpad.down.isPressed || pad.dpad.left.isPressed || pad.dpad.right.isPressed
-        || pad.startButton.isPressed || pad.selectButton.isPressed;
+        || pad.startButton.isPressed || pad.selectButton.isPressed
+        || pad.leftStickButton.isPressed || pad.rightStickButton.isPressed;
 }
