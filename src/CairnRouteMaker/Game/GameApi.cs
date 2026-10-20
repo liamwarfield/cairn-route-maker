@@ -483,6 +483,66 @@ internal static class GameApi
         return scenes != null && scenes.TryGetWorld(world, out data) && data != null;
     }
 
+    /// <summary>
+    /// For the log: is Ava spawned and where, which zone streaming thinks she and the camera are in,
+    /// the running spawner, the loaded scenes, and the spawners in them.
+    /// </summary>
+    public static string DescribeWorldState()
+    {
+        var lines = new List<string>();
+        void Add(string what, Func<string> read)
+        {
+            try
+            {
+                lines.Add($"  {what}: {read()}");
+            }
+            catch (Exception e)
+            {
+                lines.Add($"  {what}: (unreadable: {e.Message})");
+            }
+        }
+
+        Add("Ava", () => $"spawned={PawnManager.MCSpawned} switcher={(Switcher == null ? "none" : Switcher.CurrentMode.ToString())} at {AvaPosition?.ToString() ?? "(not in the world)"}");
+        Add("camera", () => Camera.main == null ? "(none)" : $"{Camera.main.name} at {Camera.main.transform.position}");
+        Add("streaming", () =>
+        {
+            var streaming = StreamingManager.Instance;
+            return streaming == null ? "(no manager)"
+                : $"world={(streaming.World == null ? "none" : streaming.World.WorldId.ToString())} zone={streaming.CurrentZone?.name ?? "none"} "
+                + $"cameraZone={streaming.CurrentCameraZone?.name ?? "none"} preloading={streaming.PreloadingZone?.name ?? "none"}";
+        });
+        Add("scenes", () =>
+        {
+            var scenes = CairnSceneManager.Instance;
+            return scenes == null ? "(no manager)"
+                : $"busy={scenes.IsBusy()} travelling={scenes.IsTraveling} streamingForCamera={scenes.isStreamingForCamera} "
+                + $"loading={scenes.ScenesLoadingCount} unloading={scenes.ScenesUnloadingCount} spawner={scenes.GameSetup?.spawner ?? "none"}";
+        });
+        Add("loaded scenes", () =>
+        {
+            var names = new List<string>();
+            for (var i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                names.Add(scene.isLoaded ? scene.name : $"{scene.name} (loading)");
+            }
+
+            return $"{names.Count}: {string.Join(", ", names)}";
+        });
+        Add("spawners", () =>
+        {
+            var spawners = Object.FindObjectsByType<SpawnerMC>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var names = new List<string>();
+            foreach (var spawner in spawners)
+            {
+                names.Add($"{spawner.name}{(spawner.gameObject.activeInHierarchy ? "" : " (inactive)")} at {spawner.transform.position}");
+            }
+
+            return names.Count == 0 ? "none loaded" : string.Join("; ", names);
+        });
+        return string.Join("\n", lines);
+    }
+
     /// <summary>Loading, streaming or travelling: not a moment to start another trip.</summary>
     public static bool IsWorldBusy
     {
