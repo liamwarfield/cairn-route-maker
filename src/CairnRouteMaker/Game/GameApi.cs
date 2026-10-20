@@ -375,6 +375,7 @@ internal static class GameApi
         }
 
         var setup = new GameSetup(spawner) { summitMode = true, constraints = FreeClimbConstraints };
+        setup.spawner = SpawnerObjectName(data, zone, spawner.name);
         summit.SelectedWorld = data;
         summit.SelectedZone = zone;
         summit.SelectedSpawner = spawner;
@@ -620,12 +621,48 @@ internal static class GameApi
             return;
         }
 
-        var spawner = zone.spawnersForMainMenu[0];
-        MelonLogger.Msg($"Spawn point for the trip: {setup.spawner} -> {spawner.name}.");
+        var spawner = SpawnerObjectName(StreamingManager.Instance.World, zone, zone.spawnersForMainMenu[0].name);
+        MelonLogger.Msg($"Spawn point for the trip: {setup.spawner} -> {spawner}.");
         // GameSetup is a struct: this is a copy, so it has to be stored back.
-        setup.spawner = spawner.name;
+        setup.spawner = spawner;
         scenes.GameSetup = setup;
         MelonLogger.Msg($"The game's spawn point is now {scenes.GameSetup.spawner}.");
+    }
+
+    /// <summary>
+    /// The name of the spawner object a listed spawn point means. Ava spawns at the loaded SpawnerMC
+    /// whose name matches GameSetup.spawner, and a few listed names are stale: 26_LastBridge lists
+    /// SpawnerMC_Kami_24_LastBridge, but its object is SpawnerMC_Kami_26_LastBridge. With no match
+    /// she never spawns and the camera sits at the origin, which only shows the distant (_LOD) scenes.
+    /// A name that points at no zone of the world is taken to mean this zone's spawner.
+    /// </summary>
+    private static string SpawnerObjectName(WorldZoneData world, ZoneSceneData zone, string listed)
+    {
+        var prefix = world == null ? null : $"SpawnerMC_{world.WorldId}_";
+        if (prefix == null || listed == null || !listed.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return listed;
+        }
+
+        // "SpawnerMC_Kami_20_SpecialDome (4)" names the zone 20_SpecialDome.
+        var named = listed.Substring(prefix.Length);
+        var space = named.IndexOf(' ');
+        if (space >= 0)
+        {
+            named = named[..space];
+        }
+
+        foreach (var candidate in world.zones)
+        {
+            if (candidate != null && candidate.name == named)
+            {
+                return listed;
+            }
+        }
+
+        var corrected = prefix + zone.name;
+        MelonLogger.Msg($"The spawn point {listed} names no zone of {world.WorldId}; using {corrected}.");
+        return corrected;
     }
 
     public static bool TryTravelToWorld(StreamingTweakables.World world, out string reason)
