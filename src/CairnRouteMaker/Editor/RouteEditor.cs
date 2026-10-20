@@ -340,7 +340,7 @@ internal sealed class RouteEditor
 
         if (Input.Teleport && HasBrushTarget)
         {
-            if (GameApi.TryTeleportAva(hit.point, _yaw, out var reason))
+            if (GameApi.TryQuickTeleportAva(hit.point, _yaw, out var reason))
             {
                 Close();
                 SetStatus("Moved Ava to the marker.");

@@ -711,6 +711,35 @@ internal static class GameApi
             MelonLogger.Warning("No FreeRoamManager in this game mode; using a direct teleport.");
         }
 
+        return TryDirectTeleport(position, rotation, out reason);
+    }
+
+    /// <summary>
+    /// Move Ava without the warp's loading screen, for short hops: a bare TransitionToMode, used
+    /// only when she's on her feet and the target is in the zone that's already loaded. Anything
+    /// else (climbing, another zone) goes through <see cref="TryTeleportAva"/> and its loading screen.
+    /// </summary>
+    public static bool TryQuickTeleportAva(Vector3 position, float yawDegrees, out string reason)
+    {
+        if (!CanMoveAva(out reason))
+        {
+            return false;
+        }
+
+        var streaming = StreamingManager.Instance;
+        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(position);
+        var sameZone = targetZone != null && streaming.CurrentZone != null && targetZone.name == streaming.CurrentZone.name;
+        if (Switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking || !sameZone)
+        {
+            MelonLogger.Msg($"Quick teleport not possible ({Switcher.CurrentMode}, target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
+            return TryTeleportAva(position, yawDegrees, out reason);
+        }
+
+        return TryDirectTeleport(position, Quaternion.Euler(0f, yawDegrees, 0f), out reason);
+    }
+
+    private static bool TryDirectTeleport(Vector3 position, Quaternion rotation, out string reason)
+    {
         var switcher = Switcher;
         if (switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking)
         {
