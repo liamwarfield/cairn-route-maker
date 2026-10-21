@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using CairnRouteMaker.Climbing;
+using CairnRouteMaker.Controls;
 using CairnRouteMaker.Editor;
 using CairnRouteMaker.FreeClimb;
 using CairnRouteMaker.Game;
@@ -34,6 +35,7 @@ public sealed class RouteMakerMod : MelonMod
     {
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
+        ModControls.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Controls.json"));
         _session = new FreeClimbSession(_traveler);
         _session.Started += OnFreeClimbStarted;
         _session.Ended += OnFreeClimbEnded;
@@ -41,12 +43,14 @@ public sealed class RouteMakerMod : MelonMod
         MainMenuPatches.FreeClimbClicked += _launcher.Open;
         LoggerInstance.Msg($"Loaded. Routes are stored in {directory}");
         LoggerInstance.Msg("Choose Free Climb on the title screen. In free climb: F6 (or L3+R3) route editor, F8 (or R3 in the editor) freecam, F7 teleport to route start, F9 show/hide route.");
+        LoggerInstance.Msg("These are the defaults; change them in Settings > Controls > Remap controls, under Context: Freecam and Context: Route Editor.");
     }
 
     public override void OnUpdate()
     {
         try
         {
+            ModControls.EnsureCreated();
             _launcher.Update();
             _session.Update();
             HandleDiagnosticsKey();
@@ -137,13 +141,7 @@ public sealed class RouteMakerMod : MelonMod
 
     private void HandleHotkeys()
     {
-        var keyboard = Keyboard.current;
-        if (keyboard == null)
-        {
-            return;
-        }
-
-        if (keyboard.f6Key.wasPressedThisFrame || EditorInput.GamepadToggleEditor())
+        if (ModControls.OpenEditor.KeyPressed || EditorInput.GamepadToggleEditor())
         {
             EnsureEditor();
             if (_editor.IsOpen)
@@ -155,17 +153,17 @@ public sealed class RouteMakerMod : MelonMod
                 _editor.Open();
             }
         }
-        else if (keyboard.f7Key.wasPressedThisFrame)
+        else if (ModControls.GoToStart.KeyPressed)
         {
             EnsureEditor();
             _editor.PlayTest();
         }
-        else if (keyboard.f8Key.wasPressedThisFrame)
+        else if (ModControls.ToggleFreecam.KeyPressed)
         {
             EnsureEditor();
             _editor.ToggleFreecam();
         }
-        else if (keyboard.f9Key.wasPressedThisFrame && _overlay != null)
+        else if (ModControls.ShowRoute.KeyPressed && _overlay != null)
         {
             _overlay.Visible = !_overlay.Visible;
         }

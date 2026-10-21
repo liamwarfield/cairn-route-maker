@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CairnRouteMaker.Controls;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using MelonLoader;
@@ -113,11 +114,14 @@ internal sealed class RouteEditor
         _sawInput = false;
         _openedFrame = Time.frameCount;
         Input.Reset();
-        // Editing is always a deliberate switch (R3 / F8), so nothing gets changed by accident.
+        // Editing is always a deliberate switch (R3 / F8 by default), so nothing gets changed by accident.
         Freecam = true;
         IsOpen = true;
-        SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
+        SetStatus(Freecam ? FreecamHint : $"Editing route for {Route.ZoneKey}.");
     }
+
+    private static string FreecamHint =>
+        $"Freecam: {ModControls.Teleport.PadName} or {ModControls.Teleport.KeyName} moves Ava to the marker.";
 
     public void Close()
     {
@@ -168,7 +172,7 @@ internal sealed class RouteEditor
 
         EndStroke();
         Freecam = !Freecam;
-        SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
+        SetStatus(Freecam ? FreecamHint : $"Editing route for {Route.ZoneKey}.");
     }
 
     /// <summary>
@@ -187,7 +191,7 @@ internal sealed class RouteEditor
         var start = Route.Start;
         if (start == null)
         {
-            SetStatus("This route has no start position yet (G, or Y on a gamepad, in the editor).");
+            SetStatus($"This route has no start position yet ({ModControls.SetStart.KeyName}, or {ModControls.SetStart.PadName} on a gamepad, in the editor).");
             return;
         }
 

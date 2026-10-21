@@ -1,3 +1,5 @@
+using System.Linq;
+using CairnRouteMaker.Controls;
 using CairnRouteMaker.Routes;
 using UnityEngine;
 
@@ -8,33 +10,60 @@ internal static class EditorHud
 {
     private const float StatusSeconds = 4f;
 
-    private const string KeyboardHelp =
-        "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
-        "Hold RMB look   LMB paint   Scroll or [ ] brush size\n" +
-        "Tab or 1/2/3 allow/deny/erase   G set start (facing = camera)\n" +
-        "F set finish (brush size, at least 1 m)\n" +
-        "Ctrl+Z undo   Ctrl+S save   P play-test   L level select   Esc exit\n" +
-        "F8 freecam";
+    // Help text names the current bindings, which can be changed on the game's remap screen, so
+    // it's rebuilt whenever they change.
+    private static int _helpVersion = -1;
+    private static string _keyboardHelp;
+    private static string _gamepadHelp;
+    private static string _freecamKeyboardHelp;
+    private static string _freecamGamepadHelp;
 
-    private const string GamepadHelp =
-        "LS move   RS look   LB/RB down/up   hold LT fast\n" +
-        "RT paint   D-pad up/down brush size   X allow/deny/erase\n" +
-        "Y set start   A set finish (brush size)   View undo\n" +
-        "D-pad right save   Menu play-test\n" +
-        "D-pad left level select   B or L3+R3 exit   R3 freecam";
+    private static void RefreshHelp()
+    {
+        if (_helpVersion == ModControls.Version)
+        {
+            return;
+        }
 
-    private const string FreecamKeyboardHelp =
-        "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
-        "Hold RMB look   LMB move Ava to the marker\n" +
-        "P play-test   L level select   Esc exit   F8 route editor";
+        _helpVersion = ModControls.Version;
+        var move = $"{Keys(ModControls.MoveForward, ModControls.MoveLeft, ModControls.MoveBack, ModControls.MoveRight)} move   " +
+            $"{Keys(ModControls.MoveDown, ModControls.MoveUp)} down/up   {ModControls.Fast.KeyName} fast   {ModControls.Medium.KeyName} medium\n";
+        var padMove = $"LS move   RS look   {Pads(ModControls.MoveDown, ModControls.MoveUp)} down/up   hold {ModControls.Fast.PadName} fast\n";
 
-    private const string FreecamGamepadHelp =
-        "LS move   RS look   LB/RB down/up   hold LT fast\n" +
-        "A move Ava to the marker   Menu play-test\n" +
-        "D-pad left level select   B or L3+R3 exit   R3 route editor";
+        _keyboardHelp = move +
+            $"Hold {ModControls.Look.KeyName} look   {ModControls.Paint.KeyName} paint   " +
+            $"Scroll or {Keys(ModControls.BrushSmaller, ModControls.BrushBigger)} brush size\n" +
+            $"{ModControls.CycleBrush.KeyName} or {Keys(ModControls.AllowBrush, ModControls.DenyBrush, ModControls.EraseBrush)} allow/deny/erase   " +
+            $"{ModControls.SetStart.KeyName} set start (facing = camera)\n" +
+            $"{ModControls.SetFinish.KeyName} set finish (brush size, at least 1 m)\n" +
+            $"Ctrl+{ModControls.Undo.KeyName} undo   Ctrl+{ModControls.Save.KeyName} save   {ModControls.PlayTest.KeyName} play-test   " +
+            $"{ModControls.LevelSelect.KeyName} level select   {ModControls.Exit.KeyName} exit\n" +
+            $"{ModControls.ToggleFreecam.KeyName} freecam";
+
+        _gamepadHelp = padMove +
+            $"{ModControls.Paint.PadName} paint   {Pads(ModControls.BrushBigger, ModControls.BrushSmaller)} brush size   " +
+            $"{ModControls.CycleBrush.PadName} allow/deny/erase\n" +
+            $"{ModControls.SetStart.PadName} set start   {ModControls.SetFinish.PadName} set finish (brush size)   {ModControls.Undo.PadName} undo\n" +
+            $"{ModControls.Save.PadName} save   {ModControls.PlayTest.PadName} play-test\n" +
+            $"{ModControls.LevelSelect.PadName} level select   {ModControls.Exit.PadName} or L3+R3 exit   {ModControls.ToggleFreecam.PadName} freecam";
+
+        _freecamKeyboardHelp = move +
+            $"Hold {ModControls.Look.KeyName} look   {ModControls.Teleport.KeyName} move Ava to the marker\n" +
+            $"{ModControls.PlayTest.KeyName} play-test   {ModControls.LevelSelect.KeyName} level select   " +
+            $"{ModControls.Exit.KeyName} exit   {ModControls.ToggleFreecam.KeyName} route editor";
+
+        _freecamGamepadHelp = padMove +
+            $"{ModControls.Teleport.PadName} move Ava to the marker   {ModControls.PlayTest.PadName} play-test\n" +
+            $"{ModControls.LevelSelect.PadName} level select   {ModControls.Exit.PadName} or L3+R3 exit   {ModControls.ToggleFreecam.PadName} route editor";
+    }
+
+    private static string Keys(params Control[] controls) => string.Join("/", controls.Select(c => c.KeyName));
+
+    private static string Pads(params Control[] controls) => string.Join("/", controls.Select(c => c.PadName));
 
     public static void Draw(RouteEditor editor)
     {
+        RefreshHelp();
         if (editor.IsOpen && !editor.LevelSelect.IsOpen)
         {
             if (editor.Freecam)
@@ -75,8 +104,8 @@ internal static class EditorHud
             $"{(editor.HasBrushTarget ? "" : "  (no rock under brush)")}\n" +
             $"Strokes: {route.Strokes.Count}  stamps: {stamps}  start: {(route.Start == null ? "not set" : "set")}" +
             $"  finish: {(route.Finish == null ? "not set" : "set")}\n\n" +
-            (editor.Input.UsingGamepad ? GamepadHelp : KeyboardHelp);
-        GUI.Box(new Rect(Screen.width - 450, 20, 430, 184), text);
+            (editor.Input.UsingGamepad ? _gamepadHelp : _keyboardHelp);
+        GUI.Box(new Rect(Screen.width - 490, 20, 470, 184), text);
         DrawReticle(editor);
     }
 
@@ -85,8 +114,8 @@ internal static class EditorHud
         var text =
             $"FREECAM - {editor.Route.ZoneKey}\n" +
             $"{(editor.HasBrushTarget ? "" : "No rock under the marker")}\n\n" +
-            (editor.Input.UsingGamepad ? FreecamGamepadHelp : FreecamKeyboardHelp);
-        GUI.Box(new Rect(Screen.width - 450, 20, 430, 104), text);
+            (editor.Input.UsingGamepad ? _freecamGamepadHelp : _freecamKeyboardHelp);
+        GUI.Box(new Rect(Screen.width - 490, 20, 470, 104), text);
         DrawReticle(editor);
     }
 

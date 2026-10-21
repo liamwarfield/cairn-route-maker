@@ -1,13 +1,16 @@
+using CairnRouteMaker.Controls;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace CairnRouteMaker.Editor;
 
 /// <summary>
-/// Reads keyboard/mouse and gamepad directly (the game's own input is blocked while the editor
-/// is open) and turns them into editor actions, so every action works from either device.
+/// Reads keyboard/mouse and gamepad (the game's own input is blocked while the editor is open) and
+/// turns them into editor actions, so every action works from either device. Buttons come from
+/// <see cref="ModControls"/>, which the game's remap screen can rebind; sticks, mouse movement, the
+/// scroll wheel, L3+R3 and menu navigation are read from the devices directly.
 ///
-/// Gamepad layout:
+/// Default gamepad layout:
 ///   left stick move, right stick look, LB/RB down/up, hold LT fast,
 ///   RT paint, X cycle brush, D-pad up/down brush size, Y set start, A set finish,
 ///   View undo, D-pad right save, Menu play-test, D-pad left level select, B close.
@@ -27,9 +30,10 @@ internal sealed class EditorInput
     private const float StickLookSpeed = 140f;
     private const float MouseLookSensitivity = 0.12f;
 
-    // R3 switches modes on release, so pressing it as half of L3+R3 doesn't also switch.
-    private bool _rightStickDown;
-    private bool _rightStickCombo;
+    // The gamepad's freecam button (R3) switches modes on release, so pressing it as half of
+    // L3+R3 doesn't also switch.
+    private bool _toggleDown;
+    private bool _toggleCombo;
 
     /// <summary>True once the gamepad was the last device touched; switches the brush to screen-centre aiming.</summary>
     public bool UsingGamepad { get; private set; }
@@ -78,8 +82,8 @@ internal sealed class EditorInput
     /// <summary>Forget held buttons from before the editor opened.</summary>
     public void Reset()
     {
-        _rightStickDown = false;
-        _rightStickCombo = false;
+        _toggleDown = false;
+        _toggleCombo = false;
     }
 
     public void Read(float dt)
@@ -112,52 +116,53 @@ internal sealed class EditorInput
                 UsingGamepad = false;
             }
 
+            // Held Ctrl is for Ctrl+S / Ctrl+Z, so it mustn't move the camera too.
             if (!ctrl)
             {
-                if (keyboard.wKey.isPressed) move.z += 1f;
-                if (keyboard.sKey.isPressed) move.z -= 1f;
-                if (keyboard.dKey.isPressed) move.x += 1f;
-                if (keyboard.aKey.isPressed) move.x -= 1f;
-                if (keyboard.eKey.isPressed) move.y += 1f;
-                if (keyboard.qKey.isPressed) move.y -= 1f;
+                if (ModControls.MoveForward.KeyHeld) move.z += 1f;
+                if (ModControls.MoveBack.KeyHeld) move.z -= 1f;
+                if (ModControls.MoveRight.KeyHeld) move.x += 1f;
+                if (ModControls.MoveLeft.KeyHeld) move.x -= 1f;
+                if (ModControls.MoveUp.KeyHeld) move.y += 1f;
+                if (ModControls.MoveDown.KeyHeld) move.y -= 1f;
             }
 
-            if (keyboard.leftShiftKey.isPressed) speed *= FastMultiplier;
-            if (keyboard.leftAltKey.isPressed) speed *= AltMultiplier;
+            if (ModControls.Fast.KeyHeld) speed *= FastMultiplier;
+            if (ModControls.Medium.KeyHeld) speed *= AltMultiplier;
 
-            if (mouse.rightButton.isPressed)
+            if (ModControls.Look.KeyHeld)
             {
                 looking = true;
                 look += mouse.delta.ReadValue() * MouseLookSensitivity;
             }
 
-            paintHeld |= mouse.leftButton.isPressed && !looking;
-            paintPressed |= mouse.leftButton.wasPressedThisFrame && !looking;
-            paintReleased |= mouse.leftButton.wasReleasedThisFrame;
-            Teleport |= mouse.leftButton.wasPressedThisFrame && !looking;
+            paintHeld |= ModControls.Paint.KeyHeld && !looking;
+            paintPressed |= ModControls.Paint.KeyPressed && !looking;
+            paintReleased |= ModControls.Paint.KeyReleased;
+            Teleport |= ModControls.Teleport.KeyPressed && !looking;
 
             var scroll = mouse.scroll.ReadValue().y;
             if (scroll != 0f) brushScale *= scroll > 0f ? 1.1f : 1f / 1.1f;
-            if (keyboard.rightBracketKey.wasPressedThisFrame) brushScale *= 1.25f;
-            if (keyboard.leftBracketKey.wasPressedThisFrame) brushScale /= 1.25f;
+            if (ModControls.BrushBigger.KeyPressed) brushScale *= 1.25f;
+            if (ModControls.BrushSmaller.KeyPressed) brushScale /= 1.25f;
 
-            CycleBrush |= keyboard.tabKey.wasPressedThisFrame;
-            if (keyboard.digit1Key.wasPressedThisFrame) SelectBrush = 0;
-            if (keyboard.digit2Key.wasPressedThisFrame) SelectBrush = 1;
-            if (keyboard.digit3Key.wasPressedThisFrame) SelectBrush = 2;
-            SetStart |= keyboard.gKey.wasPressedThisFrame;
-            SetFinish |= keyboard.fKey.wasPressedThisFrame;
-            Undo |= ctrl && keyboard.zKey.wasPressedThisFrame;
-            Save |= ctrl && keyboard.sKey.wasPressedThisFrame;
-            PlayTest |= keyboard.pKey.wasPressedThisFrame;
-            // F6 and F8 (freecam) are handled by the mod itself, so they work with the editor closed too.
-            Close |= keyboard.escapeKey.wasPressedThisFrame;
-            LevelSelect |= keyboard.lKey.wasPressedThisFrame;
+            CycleBrush |= ModControls.CycleBrush.KeyPressed;
+            if (ModControls.AllowBrush.KeyPressed) SelectBrush = 0;
+            if (ModControls.DenyBrush.KeyPressed) SelectBrush = 1;
+            if (ModControls.EraseBrush.KeyPressed) SelectBrush = 2;
+            SetStart |= ModControls.SetStart.KeyPressed;
+            SetFinish |= ModControls.SetFinish.KeyPressed;
+            Undo |= ctrl && ModControls.Undo.KeyPressed;
+            Save |= ctrl && ModControls.Save.KeyPressed;
+            PlayTest |= ModControls.PlayTest.KeyPressed;
+            // The keyboard's open-editor and freecam keys are handled by the mod itself, so they work with the editor closed too.
+            Close |= ModControls.Exit.KeyPressed;
+            LevelSelect |= ModControls.LevelSelect.KeyPressed;
 
-            if (keyboard.upArrowKey.wasPressedThisFrame || keyboard.wKey.wasPressedThisFrame) MenuMove -= 1;
-            if (keyboard.downArrowKey.wasPressedThisFrame || keyboard.sKey.wasPressedThisFrame) MenuMove += 1;
+            if (keyboard.upArrowKey.wasPressedThisFrame || ModControls.MoveForward.KeyPressed) MenuMove -= 1;
+            if (keyboard.downArrowKey.wasPressedThisFrame || ModControls.MoveBack.KeyPressed) MenuMove += 1;
             MenuConfirm |= keyboard.enterKey.wasPressedThisFrame || keyboard.spaceKey.wasPressedThisFrame;
-            MenuBack |= keyboard.escapeKey.wasPressedThisFrame || keyboard.lKey.wasPressedThisFrame;
+            MenuBack |= ModControls.Exit.KeyPressed || ModControls.LevelSelect.KeyPressed;
             MenuClick |= mouse.leftButton.wasPressedThisFrame;
             if (scroll != 0f) MenuMove += scroll > 0f ? -1 : 1;
             PointerPosition = mouse.position.ReadValue();
@@ -173,50 +178,50 @@ internal sealed class EditorInput
             }
 
             move += new Vector3(leftStick.x, 0f, leftStick.y);
-            if (pad.rightShoulder.isPressed) move.y += 1f;
-            if (pad.leftShoulder.isPressed) move.y -= 1f;
-            if (pad.leftTrigger.ReadValue() > 0.5f) speed *= FastMultiplier;
+            if (ModControls.MoveUp.PadHeld) move.y += 1f;
+            if (ModControls.MoveDown.PadHeld) move.y -= 1f;
+            if (ModControls.Fast.PadHeld) speed *= FastMultiplier;
             look += rightStick * (StickLookSpeed * dt);
 
-            var trigger = pad.rightTrigger;
-            paintHeld |= trigger.isPressed;
-            paintPressed |= trigger.wasPressedThisFrame;
-            paintReleased |= trigger.wasReleasedThisFrame;
+            paintHeld |= ModControls.Paint.PadHeld;
+            paintPressed |= ModControls.Paint.PadPressed;
+            paintReleased |= ModControls.Paint.PadReleased;
 
-            if (pad.dpad.up.isPressed) brushScale *= Mathf.Pow(2f, dt);
-            if (pad.dpad.down.isPressed) brushScale /= Mathf.Pow(2f, dt);
+            // Held on a gamepad, the brush keeps growing or shrinking.
+            if (ModControls.BrushBigger.PadHeld) brushScale *= Mathf.Pow(2f, dt);
+            if (ModControls.BrushSmaller.PadHeld) brushScale /= Mathf.Pow(2f, dt);
 
-            CycleBrush |= pad.buttonWest.wasPressedThisFrame;
-            SetStart |= pad.buttonNorth.wasPressedThisFrame;
-            SetFinish |= pad.buttonSouth.wasPressedThisFrame;
-            Teleport |= pad.buttonSouth.wasPressedThisFrame;
-            Undo |= pad.selectButton.wasPressedThisFrame;
-            Save |= pad.dpad.right.wasPressedThisFrame;
-            PlayTest |= pad.startButton.wasPressedThisFrame;
-            Close |= pad.buttonEast.wasPressedThisFrame;
-            LevelSelect |= pad.dpad.left.wasPressedThisFrame;
+            CycleBrush |= ModControls.CycleBrush.PadPressed;
+            SetStart |= ModControls.SetStart.PadPressed;
+            SetFinish |= ModControls.SetFinish.PadPressed;
+            Teleport |= ModControls.Teleport.PadPressed;
+            Undo |= ModControls.Undo.PadPressed;
+            Save |= ModControls.Save.PadPressed;
+            PlayTest |= ModControls.PlayTest.PadPressed;
+            Close |= ModControls.Exit.PadPressed;
+            LevelSelect |= ModControls.LevelSelect.PadPressed;
 
-            if (pad.rightStickButton.wasPressedThisFrame)
+            if (ModControls.ToggleFreecam.PadPressed)
             {
-                _rightStickDown = true;
-                _rightStickCombo = false;
+                _toggleDown = true;
+                _toggleCombo = false;
             }
 
-            if (_rightStickDown && pad.leftStickButton.isPressed)
+            if (_toggleDown && pad.leftStickButton.isPressed && pad.rightStickButton.isPressed)
             {
-                _rightStickCombo = true;
+                _toggleCombo = true;
             }
 
-            if (pad.rightStickButton.wasReleasedThisFrame)
+            if (ModControls.ToggleFreecam.PadReleased)
             {
-                ToggleFreecam |= _rightStickDown && !_rightStickCombo;
-                _rightStickDown = false;
+                ToggleFreecam |= _toggleDown && !_toggleCombo;
+                _toggleDown = false;
             }
 
             if (pad.dpad.up.wasPressedThisFrame || pad.leftStick.up.wasPressedThisFrame) MenuMove -= 1;
             if (pad.dpad.down.wasPressedThisFrame || pad.leftStick.down.wasPressedThisFrame) MenuMove += 1;
             MenuConfirm |= pad.buttonSouth.wasPressedThisFrame;
-            MenuBack |= pad.buttonEast.wasPressedThisFrame || pad.dpad.left.wasPressedThisFrame;
+            MenuBack |= ModControls.Exit.PadPressed || ModControls.LevelSelect.PadPressed;
         }
 
         Move = move;
