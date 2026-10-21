@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using CairnRouteMaker.Controls;
 using CairnRouteMaker.Game;
 using Il2CppTMPro;
 using UnityEngine;
@@ -54,6 +55,7 @@ internal static class LevelSelectView
     private static int _shownPage = -1;
     private static int _shownFrame = -1;
     private static bool? _shownGamepad;
+    private static int _shownControlsVersion = -1;
     private static float _scroll;
     private static float _arrowY;
     private static int _bouncedFor = -1;
@@ -103,12 +105,13 @@ internal static class LevelSelectView
         }
 
         _canvas.scaleFactor = Screen.height / ReferenceHeight;
-        if (_shownGamepad != input.UsingGamepad)
+        if (_shownGamepad != input.UsingGamepad || _shownControlsVersion != ModControls.Version)
         {
             _shownGamepad = input.UsingGamepad;
+            _shownControlsVersion = ModControls.Version;
             var hints = input.UsingGamepad
-                ? Hint("D-pad", "Choose") + Hint("A", "Select") + Hint("B", "Back")
-                : Hint("Arrows", "Choose") + Hint("Enter", "Select") + Hint("Esc", "Back");
+                ? Hint("D-pad", "Choose") + Hint("A", "Select") + Hint(ModControls.Exit.PadName, "Back")
+                : Hint("Arrows", "Choose") + Hint("Enter", "Select") + Hint(ModControls.Exit.KeyName, "Back");
             SetText(_hints, hints, _style.FontSize * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
         }
 

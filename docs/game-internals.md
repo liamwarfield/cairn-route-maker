@@ -204,3 +204,29 @@ Read from the interop assemblies (`Il2CppTheGameBakers.Cairn.Global.dll`) and by
     - `GameSetup` is a **struct** (`spawner` at offset 0, stored inline at `CairnSceneManager+0x80`). Reading the property from a mod gives a copy, so a change has to be assigned back.
     - `spawner` is the spawner's **name** (a string). The mod sets it to the destination's first `spawnersForMainMenu` entry before travelling.
   - **Stale spawn point names:** Ava spawns only at a loaded `SpawnerMC` whose object name matches `GameSetup.spawner`. Some `spawnersForMainMenu` names don't match: `26_LastBridge` lists `SpawnerMC_Kami_24_LastBridge`, but its object is `SpawnerMC_Kami_26_LastBridge`, and no `24_LastBridge` zone exists. With no match, Ava never spawns and the camera stays at the origin (inside `01_FirstRidge`), so every other zone shows only its `_LOD` scene. When a listed name points at no zone of the world, the mod uses `SpawnerMC_<world>_<zone>` instead.
+
+## Remap controls screen
+
+Read by disassembly (`GameAssembly.dll`; RVAs from the Cpp2IL stubs). The mod's use of it is untested in game.
+
+- **Building the screen:** `TheGameBakers.Cairn.RebindSheet.Start` (RVA `0x30D1490`) runs once per sheet. It calls `FieldRebind<,>.ResetStatics()` for both field types, then walks `gamepadRebindList.rebinds` and `kbmRebindList.rebinds` (`RebindList` ScriptableObjects, shared by the title-screen and pause-menu sheets). For each `RebindData`:
+  1. If `headerLabelLocKey` isn't the "none" key, it instantiates `headerPrefab` (a `LocalizedText`), calls `ChangeLocKey(header)` and parents it to the fields. Only the first row of each context has a header ("Context: …", keys `REBIND_CONTEXT_*`).
+  2. It builds a `FieldGamepadRebind` / `FieldKbmRebind(rebind, sheet)`, adds it to `gamepadFields` / `kbmFields`, and adds the row to the scroll handler.
+- **`RebindData`:** `labelLocKey`, `headerLabelLocKey`, `actionWrapper` (`InputActionReferenceWrapper`), `rebindContext`, `firstBindingId`, `secondBindingId`, `subActionWrappers`.
+  - The field constructor loops over `subActionWrappers` without a null check, so it must be at least an empty array.
+  - The row's label comes from `LocalizationManager.Get(labelLocKey)` (called in the `FieldRebind<,>` constructor and on language change). Headers and the rebind popup go through `LocalizedText.Refresh`, which also calls `Get`.
+- **Finding the action:** `InputActionReferenceWrapper.InputAction` (RVA `0x2C52790`) needs `InputManager` to be ready. It looks `reference.action` up in `InputManager.assetToInstanceCache` (`Dictionary<InputAction, InputAction>`) first. On a miss it searches `InputManager.InputActions.asset` by map id and action id and caches the result, or returns null if nothing matches. So an action from another asset works if it's in the cache.
+- **Finding the binding:** `BaseFieldRebind.FindBinding(action, bindingId, wasAdded, out hasOverride, out forbiden, acceptedDeviceTypes)` (RVA `0x30BD7F0`):
+  - It throws if `bindingId` is null.
+  - It returns the first binding whose effective path contains one of the device type names (`Keyboard`/`Mouse` for kbm rows, `Gamepad` for gamepad rows) and whose id equals `bindingId`. An empty `bindingId` matches any id.
+  - Kbm rows use only `firstBindingId`. With no match, a rebind adds a new binding (`WithRebindAddingNewBinding`).
+- **Rebinding:** `FieldRebind<,>.Rebind` disables the action's map if it's enabled, runs `PerformInteractiveRebinding`, then re-enables the map. Resets call `RemoveBindingOverride`. Both end in `RebindSheet.OnRebind(field, action)`.
+- **Clash checks:** `rebindContext` is a flag set (`RebindContextStringIdEnum`, game bits up to `1 << 18`).
+  - `FieldRebind<,>.CheckFlags` loops over the static `contextEnums` array and calls back for each bit the row has (`(context & flag) != 0`).
+  - `AddToDictionary` creates the per-context lists in `rebindsByContext` on first use. Extra bits work once they're appended to `contextEnums`.
+- **Saving:** `ControlsSettingsPage.SaveData` stores `InputManager.GetRebindingsSave()`, which covers only the game's own actions. `ApplyRebindingsSave` loads them at startup.
+- **What the mod does** (`Game/ControlsMenuPatches.cs`):
+  - It appends rows for its own `InputActionAsset` (`Controls/ModControls.cs`) to both lists in a `RebindSheet.Start` prefix.
+  - It puts its actions in `assetToInstanceCache`, mapped to themselves, and adds context bits `1 << 24` (Freecam) and `1 << 25` (Route Editor).
+  - It answers made-up loc keys in a `LocalizationManager.Get` prefix.
+  - It saves its rebinds to `UserData/CairnRouteMaker/Controls.json` from a `RebindSheet.OnRebind` postfix.
