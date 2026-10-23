@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using Il2Cpp;
+using UnityEngine;
 
 namespace CairnRouteMaker.Editor;
 
@@ -11,13 +12,15 @@ namespace CairnRouteMaker.Editor;
 /// stand on the start), zones of the current mountain, and the other mountains. From it, "Manage saved
 /// routes" lists every route with travel and delete actions. On the title screen it's the free-climb
 /// launcher instead: pick a saved route, or a mountain, zone and spawn point, to start a game there.
+/// Both end with the settings: the paint colours (see <see cref="PaintColors"/>).
 /// Pages are rebuilt each time they show.
 /// </summary>
 internal sealed class LevelSelect
 {
     public sealed class Entry
     {
-        public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null)
+        public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null,
+            IReadOnlyList<Color32> swatches = null)
         {
             Label = label;
             IsHeader = isHeader;
@@ -25,12 +28,16 @@ internal sealed class LevelSelect
             Choose = choose;
             LeavesEditor = leavesEditor;
             Note = note;
+            Swatches = swatches;
         }
 
         public string Label { get; }
 
         /// <summary>Shown smaller and dimmer after the label, e.g. "you are here".</summary>
         public string Note { get; }
+
+        /// <summary>Colour squares shown between the label and the note, or null.</summary>
+        public IReadOnlyList<Color32> Swatches { get; }
         public bool IsHeader { get; }
         public bool Enabled { get; }
         public Action Choose { get; }
@@ -182,6 +189,7 @@ internal sealed class LevelSelect
             Add(new Entry(id.ToString(), false, !world.IsCurrent, () => _traveler.Start(id, null, null, 0f, _report), leavesEditor: true, note: note));
         }
 
+        AddSettings(ShowLevels);
         End();
     }
 
@@ -211,6 +219,7 @@ internal sealed class LevelSelect
             Add(new Entry(id.ToString(), false, GameApi.LaunchableZones(id).Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id))));
         }
 
+        AddSettings(ShowLaunch);
         End();
     }
 
@@ -312,6 +321,75 @@ internal sealed class LevelSelect
             ShowRoutes();
         }));
         End();
+    }
+
+    /// <summary>The settings section that ends the first page; <paramref name="page"/> is that page, to come back to.</summary>
+    private void AddSettings(Action page)
+    {
+        Add(new Entry("Settings", true, false, null));
+        Add(new Entry("Paint colours", false, true, () => Push(page, ShowPaintColors),
+            swatches: new[] { PaintColors.Allow, PaintColors.Deny }));
+    }
+
+    private void ShowPaintColors()
+    {
+        Begin("Paint Colours", "Settings", "Pick from the lists, or set any #RRGGBB in UserData/MelonPreferences.cfg.");
+        foreach (var mode in new[] { StrokeMode.Allow, StrokeMode.Deny })
+        {
+            var color = PaintColors.Of(mode);
+            Add(new Entry(mode == StrokeMode.Allow ? "Allow paint" : "Deny paint", false, true, () => Push(ShowPaintColors, () => ShowPaintChoices(mode)),
+                note: PaintColors.NameOf(color), swatches: new[] { color }));
+        }
+
+        Add(new Entry("Presets", true, false, null));
+        foreach (var preset in PaintColors.Presets)
+        {
+            Add(new Entry(preset.Name, false, true, () =>
+            {
+                // Redraw the swatches above, staying on this entry.
+                var index = Selected;
+                PaintColors.SetBoth(preset.Allow, preset.Deny);
+                ShowPaintColors();
+                Select(index);
+            }, note: preset.Note, swatches: new[] { preset.Allow, preset.Deny }));
+        }
+
+        End();
+    }
+
+    private void ShowPaintChoices(StrokeMode mode)
+    {
+        var allow = mode == StrokeMode.Allow;
+        Begin(allow ? "Allow Paint" : "Deny Paint", "Settings · Paint Colours", allow ? "Paint for holds Ava may use." : "Paint for holds that are off-route.");
+        var current = PaintColors.Of(mode);
+        var other = PaintColors.Of(allow ? StrokeMode.Deny : StrokeMode.Allow);
+        var currentIndex = -1;
+        foreach (var choice in PaintColors.Palette)
+        {
+            var color = choice.Color;
+            string note = null;
+            if (PaintColors.Same(color, current))
+            {
+                note = "current";
+                currentIndex = _entries.Count;
+            }
+            else if (PaintColors.Same(color, other))
+            {
+                note = allow ? "swaps with deny paint" : "swaps with allow paint";
+            }
+
+            Add(new Entry(choice.Name, false, true, () =>
+            {
+                PaintColors.Set(mode, color);
+                Back();
+            }, note: note, swatches: new[] { color }));
+        }
+
+        End();
+        if (currentIndex >= 0)
+        {
+            Select(currentIndex);
+        }
     }
 
     private static string Summary(Route route)

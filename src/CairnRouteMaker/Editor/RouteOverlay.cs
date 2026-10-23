@@ -20,9 +20,9 @@ internal sealed class RouteOverlay
     private static readonly Color FinishColor = new(0.25f, 0.6f, 1f, 0.3f);
 
     // Strong enough to read through the game's colour grading; erase is black so it can't be
-    // mistaken for deny.
-    private static readonly Color BrushAllowColor = new(1f, 0.82f, 0.15f, 0.4f);
-    private static readonly Color BrushDenyColor = new(0.95f, 0.1f, 0.05f, 0.45f);
+    // mistaken for deny. Allow and deny take the paint colours (see PaintColors).
+    private const float BrushAllowAlpha = 0.4f;
+    private const float BrushDenyAlpha = 0.45f;
     private static readonly Color BrushEraseColor = new(0f, 0f, 0f, 0.55f);
     private static readonly Color MarkerColor = new(0.9f, 0.95f, 1f, 0.5f);
 
@@ -48,6 +48,8 @@ internal sealed class RouteOverlay
             DrawingFinished = (cells, workMs, wallMs) =>
                 MelonLogger.Msg($"Drew route paint: {cells} decals, {workMs:0} ms of work over {wallMs:0} ms."),
         };
+        ApplyPaintColors();
+        PaintColors.Changed += ApplyPaintColors;
 
         _start = CreateStartMarker();
         _start.SetActive(false);
@@ -197,9 +199,20 @@ internal sealed class RouteOverlay
     {
         _startMaterial = CreateMaterial(StartColor);
         _finishMaterial = CreateMaterial(FinishColor);
-        _brushMaterials = new[] { CreateMaterial(BrushAllowColor), CreateMaterial(BrushDenyColor), CreateMaterial(BrushEraseColor) };
+        // Allow and deny are tinted by ApplyPaintColors.
+        _brushMaterials = new[] { CreateMaterial(Color.clear), CreateMaterial(Color.clear), CreateMaterial(BrushEraseColor) };
         _markerMaterial = CreateMaterial(MarkerColor);
     }
+
+    /// <summary>Redraw the paint and retint the brush in the current paint colours.</summary>
+    private void ApplyPaintColors()
+    {
+        _paint.SetColors(PaintColors.Allow, PaintColors.Deny);
+        _brushMaterials[(int)StrokeMode.Allow].color = WithAlpha(PaintColors.Allow, BrushAllowAlpha);
+        _brushMaterials[(int)StrokeMode.Deny].color = WithAlpha(PaintColors.Deny, BrushDenyAlpha);
+    }
+
+    private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);
 
     private static Shader _shader;
 

@@ -27,6 +27,11 @@ internal static class LevelSelectView
     private const float HeaderGap = 18f;
     private const float NoteGap = 18f;
 
+    /// <summary>Colour swatch side and the gap after each, as fractions of the font size.</summary>
+    private const float SwatchSize = 0.55f;
+    private const float SwatchGap = 0.25f;
+    private const int MaxSwatches = 2;
+
     /// <summary>The list fades out over this much at its top and bottom edges.</summary>
     private const float Fade = 44f;
     private const float PageFadeSeconds = 0.18f;
@@ -68,6 +73,7 @@ internal static class LevelSelectView
         public RectTransform Rect;
         public TextMeshProUGUI Label;
         public TextMeshProUGUI Note;
+        public Image[] Swatches;
         public float Top;
         public float Height;
         public bool Header;
@@ -294,6 +300,7 @@ internal static class LevelSelectView
                 label.characterSpacing = 12f;
                 label.alignment = TextAlignmentOptions.BottomLeft;
                 row.Note.gameObject.SetActive(false);
+                PlaceSwatches(row, null, 0f, size);
                 continue;
             }
 
@@ -304,11 +311,10 @@ internal static class LevelSelectView
 
             var note = row.Note;
             SetText(note, entry.Note, size * 0.5f, _style.NotSelected);
-            if (entry.Note != null)
-            {
-                var width = Mathf.Min(label.GetPreferredValues(entry.Label).x, label.rectTransform.rect.width);
-                note.rectTransform.anchoredPosition = new Vector2(width + NoteGap, 0f);
-            }
+            var afterLabel = entry.Note != null || entry.Swatches != null
+                ? Mathf.Min(label.GetPreferredValues(entry.Label).x, label.rectTransform.rect.width) + NoteGap
+                : 0f;
+            note.rectTransform.anchoredPosition = new Vector2(PlaceSwatches(row, entry.Swatches, afterLabel, size), 0f);
         }
 
         _contentHeight = y + Fade;
@@ -345,10 +351,44 @@ internal static class LevelSelectView
             noteRect.pivot = new Vector2(0f, 0.5f);
             noteRect.sizeDelta = new Vector2(600f, 0f);
 
-            Rows.Add(new Row { Rect = rect, Label = label, Note = note });
+            // Also children of the label: plain squares tinted with the entry's colours.
+            var swatches = new Image[MaxSwatches];
+            for (var i = 0; i < swatches.Length; i++)
+            {
+                var swatchRect = NewRect($"Swatch{i}", labelRect);
+                swatchRect.anchorMin = swatchRect.anchorMax = new Vector2(0f, 0.5f);
+                swatchRect.pivot = new Vector2(0f, 0.5f);
+                swatches[i] = swatchRect.gameObject.AddComponent<Image>();
+                swatches[i].raycastTarget = false;
+                swatchRect.gameObject.SetActive(false);
+            }
+
+            Rows.Add(new Row { Rect = rect, Label = label, Note = note, Swatches = swatches });
         }
 
         return Rows[index];
+    }
+
+    /// <summary>Show a row's colour swatches in a line starting at <paramref name="x"/>; returns where the line ends.</summary>
+    private static float PlaceSwatches(Row row, IReadOnlyList<Color32> colors, float x, float fontSize)
+    {
+        for (var i = 0; i < row.Swatches.Length; i++)
+        {
+            var swatch = row.Swatches[i];
+            var shown = colors != null && i < colors.Count;
+            swatch.gameObject.SetActive(shown);
+            if (!shown)
+            {
+                continue;
+            }
+
+            swatch.color = colors[i];
+            swatch.rectTransform.sizeDelta = Vector2.one * (fontSize * SwatchSize);
+            swatch.rectTransform.anchoredPosition = new Vector2(x, 0f);
+            x += fontSize * (SwatchSize + SwatchGap);
+        }
+
+        return x;
     }
 
     private static void Build()

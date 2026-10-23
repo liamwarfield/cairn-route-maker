@@ -51,9 +51,6 @@ internal sealed class DecalPaint
         NVector3.UnitX, -NVector3.UnitX, NVector3.UnitY, -NVector3.UnitY, NVector3.UnitZ, -NVector3.UnitZ,
     };
 
-    private static readonly Color32 AllowColor = new(255, 205, 40, 255);
-    private static readonly Color32 DenyColor = new(240, 45, 30, 255);
-
     private sealed class Entry
     {
         public int StrokeIndex;
@@ -103,8 +100,22 @@ internal sealed class DecalPaint
     private Material _baseMaterial;
     private TGBDecal _template;
     private bool _warned;
+    private Color32 _allowColor;
+    private Color32 _denyColor;
 
     public DecalPaint(Transform parent) => _parent = parent;
+
+    /// <summary>Change the paint colours; what's already painted is redrawn over the next few frames.</summary>
+    public void SetColors(Color32 allow, Color32 deny)
+    {
+        _allowColor = allow;
+        _denyColor = deny;
+        foreach (var cell in _cells.Values)
+        {
+            cell.NeedsRedraw = true;
+            Enqueue(cell);
+        }
+    }
 
     public int CellCount => _cells.Count;
 
@@ -406,8 +417,10 @@ internal sealed class DecalPaint
     /// so overlapping dabs of one stroke don't leave faint rings. Erase stamps fade out whatever
     /// is there instead.
     /// </summary>
-    private static void Rasterize(Cell cell, Entry entry)
+    private void Rasterize(Cell cell, Entry entry)
     {
+        var allowColor = _allowColor;
+        var denyColor = _denyColor;
         var local = entry.Position - cell.Center;
         var s = NVector3.Dot(local, cell.Right);
         var t = NVector3.Dot(local, cell.Up);
@@ -460,7 +473,7 @@ internal sealed class DecalPaint
             var texelMode = erase ? cell.Modes[texel] : mode;
             cell.Modes[texel] = texelMode;
             cell.Coverage[texel] = coverage;
-            var color = texelMode == 1 + (int)StrokeMode.Allow ? AllowColor : DenyColor;
+            var color = texelMode == 1 + (int)StrokeMode.Allow ? allowColor : denyColor;
             var index = texel * 4;
             cell.Pixels[index] = color.r;
             cell.Pixels[index + 1] = color.g;

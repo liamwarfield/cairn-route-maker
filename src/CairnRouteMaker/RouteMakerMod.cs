@@ -32,6 +32,7 @@ public sealed class RouteMakerMod : MelonMod
 
     public override void OnInitializeMelon()
     {
+        PaintColors.Load();
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
         _session = new FreeClimbSession(_traveler);
