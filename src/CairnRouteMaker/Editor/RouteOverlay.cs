@@ -72,13 +72,20 @@ internal sealed class RouteOverlay
     public int PaintCellCount => _paint.CellCount;
 
     /// <summary>
-    /// Show a whole route. The paint is queued and drawn a few milliseconds per frame, so it
-    /// fills in over a moment rather than stalling the game; the log reports the total.
+    /// Show a whole route, or nothing for null. The paint is queued and drawn a few milliseconds
+    /// per frame, so it fills in over a moment rather than stalling the game; the log reports the total.
     /// </summary>
     public void Rebuild(Route route)
     {
         _paint.Clear();
         _strokeCount = 0;
+        SetStart(route?.Start);
+        SetFinish(route?.Finish);
+        if (route == null)
+        {
+            return;
+        }
+
         foreach (var stroke in route.Strokes)
         {
             BeginStroke();
@@ -89,8 +96,6 @@ internal sealed class RouteOverlay
         }
 
         _paint.ReportWhenDrawn();
-        SetStart(route.Start);
-        SetFinish(route.Finish);
     }
 
     /// <summary>Do this frame's share of queued paint drawing; call every frame.</summary>

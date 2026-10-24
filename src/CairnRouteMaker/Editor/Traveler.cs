@@ -1,5 +1,6 @@
 using System;
 using CairnRouteMaker.Game;
+using CairnRouteMaker.Routes;
 using Il2Cpp;
 using UnityEngine;
 
@@ -35,7 +36,7 @@ internal sealed class Traveler
 
     public bool IsActive { get; private set; }
 
-    public string Destination => _zone ?? _world.ToString();
+    public string Destination => _zone != null ? ZoneNames.Pretty(_zone) : ZoneNames.PrettyWorld(_world.ToString());
 
     /// <summary>Go to a world, optionally a zone in it, optionally an exact standing spot there.</summary>
     public void Start(StreamingTweakables.World world, string zone, Vector3? position, float yaw, Action<string> report)

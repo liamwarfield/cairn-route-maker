@@ -99,46 +99,135 @@ public class RouteTests
     [Fact]
     public void StorageSanitisesZoneKeysIntoFileNames()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var dir = TempDirectory();
         var storage = new RouteStorage(dir);
         var route = new Route { ZoneKey = "Kami/Zone:A" };
 
         var path = storage.Save(route);
 
         Assert.Equal(Path.Combine(dir, "Kami_Zone_A.json"), path);
-        Assert.True(storage.Exists("Kami/Zone:A"));
-        Assert.Equal("Kami/Zone:A", storage.Load("Kami/Zone:A").ZoneKey);
+        Assert.Equal("Kami_Zone_A", route.Id);
+        Assert.Equal("Kami/Zone:A", Assert.Single(storage.LoadAll()).ZoneKey);
         Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
-    public void LoadAllSkipsBrokenFilesAndSortsByZone()
+    public void AZoneCanHoldSeveralRoutes()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var dir = TempDirectory();
+        var storage = new RouteStorage(dir);
+        var first = new Route { Name = "Slab", ZoneKey = "Kami/A" };
+        var second = new Route { Name = "Roof", ZoneKey = "Kami/A" };
+
+        storage.Save(first);
+        storage.Save(second);
+        first.Name = "Slab, harder";
+        storage.Save(first);
+
+        Assert.Equal("Kami_A", first.Id);
+        Assert.Equal("Kami_A-2", second.Id);
+        var routes = storage.LoadAll();
+        Assert.Equal(new[] { "Slab, harder", "Roof" }, routes.ConvertAll(r => r.Name));
+        Assert.Equal(new[] { "Kami_A", "Kami_A-2" }, routes.ConvertAll(r => r.Id));
+        Directory.Delete(dir, recursive: true);
+    }
+
+    [Fact]
+    public void NewRoutesAreNumberedWithinTheirZone()
+    {
+        var dir = TempDirectory();
+        var storage = new RouteStorage(dir);
+        storage.Save(new Route { ZoneKey = "Kami/A" });
+        storage.Save(new Route { Name = "Route 3", ZoneKey = "Kami/A" });
+        storage.Save(new Route { ZoneKey = "Kami/B" });
+
+        var route = storage.Create("Kami/A");
+
+        Assert.Equal("Route 4", route.Name);
+        Assert.Equal("Kami/A", route.ZoneKey);
+        Assert.Null(route.Id);
+        Assert.Equal("Route 1", storage.Create("Kami/C").Name);
+        Directory.Delete(dir, recursive: true);
+    }
+
+    [Fact]
+    public void LoadAllSkipsBrokenFilesAndSortsByZoneThenAge()
+    {
+        var dir = TempDirectory();
         var storage = new RouteStorage(dir);
         storage.Save(new Route { ZoneKey = "Tenzing/B" });
-        storage.Save(new Route { ZoneKey = "Kami/A" });
+        for (var i = 0; i < 10; i++)
+        {
+            storage.Save(new Route { Name = $"A{i + 1}", ZoneKey = "Kami/A" });
+        }
+
         File.WriteAllText(Path.Combine(dir, "broken.json"), "{ not json");
 
         var routes = storage.LoadAll();
 
-        Assert.Equal(new[] { "Kami/A", "Tenzing/B" }, routes.ConvertAll(r => r.ZoneKey));
+        Assert.Equal(11, routes.Count);
+        Assert.Equal(new[] { "A1", "A2" }, routes.GetRange(0, 2).ConvertAll(r => r.Name));
+        Assert.Equal("Kami_A-10", routes[9].Id);
+        Assert.Equal("Tenzing/B", routes[10].ZoneKey);
+        Directory.Delete(dir, recursive: true);
+    }
+
+    [Fact]
+    public void ReadsRoutesSavedBeforeZonesHadSeveral()
+    {
+        var dir = TempDirectory();
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "Kami_09_Well.json"), "{\"formatVersion\": 3, \"name\": \"Untitled route\", \"zoneKey\": \"Kami/09_Well\"}");
+        var storage = new RouteStorage(dir);
+
+        var old = Assert.Single(storage.LoadAll());
+        var added = storage.Create("Kami/09_Well");
+        storage.Save(added);
+
+        Assert.Equal("Kami_09_Well", old.Id);
+        Assert.Equal("Route 2", added.Name);
+        Assert.Equal("Kami_09_Well-2", added.Id);
         Directory.Delete(dir, recursive: true);
     }
 
     [Fact]
     public void DeleteMovesTheRouteIntoBackups()
     {
-        var root = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var root = TempDirectory();
         var storage = new RouteStorage(Path.Combine(root, "Routes"));
-        storage.Save(new Route { ZoneKey = "Kami/A" });
+        var kept = new Route { Name = "Kept", ZoneKey = "Kami/A" };
+        var deleted = new Route { Name = "Deleted", ZoneKey = "Kami/A" };
+        storage.Save(kept);
+        storage.Save(deleted);
 
-        var backup = storage.Delete("Kami/A", new System.DateTime(2026, 10, 17, 16, 5, 9));
+        var backup = storage.Delete(deleted, new System.DateTime(2026, 10, 17, 16, 5, 9));
 
-        Assert.False(storage.Exists("Kami/A"));
-        Assert.Equal(Path.Combine(root, "Backups", "Kami_A.20261017-160509.json"), backup);
-        Assert.Equal("Kami/A", RouteFile.Deserialize(File.ReadAllText(backup)).ZoneKey);
-        Assert.Null(storage.Delete("Kami/A", System.DateTime.Now));
+        Assert.Equal("Kept", Assert.Single(storage.LoadAll()).Name);
+        Assert.Equal(Path.Combine(root, "Backups", "Kami_A-2.20261017-160509.json"), backup);
+        Assert.Equal("Deleted", RouteFile.Deserialize(File.ReadAllText(backup)).Name);
+        Assert.Null(storage.Delete(deleted, System.DateTime.Now));
+        Assert.Null(storage.Delete(new Route { ZoneKey = "Kami/A" }, System.DateTime.Now));
         Directory.Delete(root, recursive: true);
     }
+
+    [Fact]
+    public void NewFilesGoAfterTheNewestEvenWhenAnOlderOneWasDeleted()
+    {
+        var root = TempDirectory();
+        var storage = new RouteStorage(Path.Combine(root, "Routes"));
+        var first = new Route { Name = "First", ZoneKey = "Kami/A" };
+        storage.Save(first);
+        storage.Save(new Route { Name = "Second", ZoneKey = "Kami/A" });
+        storage.Save(new Route { Name = "Third", ZoneKey = "Kami/A" });
+        storage.Delete(first, System.DateTime.Now);
+
+        var fourth = new Route { Name = "Fourth", ZoneKey = "Kami/A" };
+        storage.Save(fourth);
+
+        Assert.Equal("Kami_A-4", fourth.Id);
+        Assert.Equal(new[] { "Second", "Third", "Fourth" }, storage.LoadAll().ConvertAll(r => r.Name));
+        Directory.Delete(root, recursive: true);
+    }
+
+    private static string TempDirectory() => Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
 }

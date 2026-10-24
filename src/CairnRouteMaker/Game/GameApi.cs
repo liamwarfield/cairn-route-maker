@@ -251,13 +251,13 @@ internal static class GameApi
         return result;
     }
 
-    /// <summary>Zones of the world Ava is in, in the game's own order.</summary>
-    public static List<ZoneInfo> ZonesInCurrentWorld()
+    /// <summary>Zones of a mountain, in the game's own order; only the current one has a zone marked current.</summary>
+    public static List<ZoneInfo> ZonesIn(StreamingTweakables.World world)
     {
         var result = new List<ZoneInfo>();
         var streaming = StreamingManager.Instance;
         var scenes = CairnSceneManager.Instance;
-        if (streaming == null || streaming.World == null || scenes == null)
+        if (streaming == null || scenes == null || !TryGetWorldData(world, out var data) || data.zones == null)
         {
             return result;
         }
@@ -272,10 +272,13 @@ internal static class GameApi
             }
         }
 
-        var currentName = streaming.CurrentZone == null ? null : streaming.CurrentZone.name;
-        foreach (var zone in streaming.World.zones)
+        var currentName = CurrentWorld != world || streaming.CurrentZone == null ? null : streaming.CurrentZone.name;
+        foreach (var zone in data.zones)
         {
-            result.Add(new ZoneInfo(zone.name, zone.name == currentName, discovered.Contains(zone.name)));
+            if (zone != null)
+            {
+                result.Add(new ZoneInfo(zone.name, zone.name == currentName, discovered.Contains(zone.name)));
+            }
         }
 
         return result;
@@ -670,7 +673,7 @@ internal static class GameApi
         {
             if (zone.name == zoneName)
             {
-                RespawnInZone(zone);
+                RespawnInZone(streaming.World, zone);
                 CairnSceneManager.Instance.TravelToZone(zone, streaming.World);
                 return true;
             }
@@ -687,7 +690,7 @@ internal static class GameApi
     /// SpawnerMC.OnRestartLevel moves her to the spawner named in GameSetup.GetCurrentGameSetup().
     /// Zones without spawn points keep the old spawner.
     /// </summary>
-    private static void RespawnInZone(ZoneSceneData zone)
+    private static void RespawnInZone(WorldZoneData world, ZoneSceneData zone)
     {
         var scenes = CairnSceneManager.Instance;
         var setup = scenes.GameSetup;
@@ -697,7 +700,7 @@ internal static class GameApi
             return;
         }
 
-        var spawner = SpawnerObjectName(StreamingManager.Instance.World, zone, zone.spawnersForMainMenu[0].name);
+        var spawner = SpawnerObjectName(world, zone, zone.spawnersForMainMenu[0].name);
         MelonLogger.Msg($"Spawn point for the trip: {setup.spawner} -> {spawner}.");
         // GameSetup is a struct: this is a copy, so it has to be stored back.
         setup.spawner = spawner;
@@ -748,8 +751,33 @@ internal static class GameApi
             return false;
         }
 
+        if (TryGetWorldData(world, out var data))
+        {
+            RespawnInWorld(data);
+        }
+
         CairnSceneManager.Instance.TravelToWorld(world, false);
         return true;
+    }
+
+    /// <summary>
+    /// A world trip has the zone trip's problem, but worse: the setup still names a spawner on the
+    /// old mountain, which the new one doesn't have, so Ava never spawns at all. TravelToWorld loads
+    /// the mountain's first zone (01_FirstRidge on Kami), so point the setup at the first spawn point
+    /// on the new mountain, which is in that zone on Kami and Tenzing.
+    /// </summary>
+    private static void RespawnInWorld(WorldZoneData world)
+    {
+        foreach (var zone in world.zones)
+        {
+            if (zone != null && zone.spawnersForMainMenu != null && zone.spawnersForMainMenu.Count > 0)
+            {
+                RespawnInZone(world, zone);
+                return;
+            }
+        }
+
+        MelonLogger.Warning($"{world.WorldId} has no spawn points; Ava may not appear there.");
     }
 
     /// <summary>

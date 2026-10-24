@@ -8,6 +8,7 @@ public class ZoneNamesTests
     [Theory]
     [InlineData("04_SplitRock", "Split Rock")]
     [InlineData("07_Lunchbreak", "Lunch Break")]
+    [InlineData("Tenzing_04_MountainMid", "Mid-Mountain")]
     [InlineData("99_SomethingNew", "99_SomethingNew")]
     [InlineData(null, null)]
     public void PrettyFallsBackToTheRealName(string zone, string expected) => Assert.Equal(expected, ZoneNames.Pretty(zone));
@@ -21,4 +22,10 @@ public class ZoneNamesTests
         Assert.Equal(zone, ZoneNames.PrettyKey(key));
         Assert.Equal(world, ZoneNames.World(key));
     }
+
+    [Theory]
+    [InlineData("Tenzing", "Tenzen")]
+    [InlineData("Kami", "Kami")]
+    [InlineData(null, null)]
+    public void WorldsUseTheirInGameNames(string world, string expected) => Assert.Equal(expected, ZoneNames.PrettyWorld(world));
 }
