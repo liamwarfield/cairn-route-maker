@@ -104,11 +104,17 @@ public sealed class RouteMakerMod : MelonMod
         _attempt.Update(_editor.Route);
     }
 
-    private void OnFreeClimbStarted()
+    /// <summary>Show the route chosen in the launcher, or none: a zone's routes are never picked automatically.</summary>
+    private void OnFreeClimbStarted(Route route)
     {
-        // Pick up the starting zone's route as if Ava had just walked into it.
         _lastZone = null;
         _nextZoneCheck = 0f;
+        if (route != null)
+        {
+            EnsureEditor();
+        }
+
+        _editor?.ShowRoute(route);
         if (_overlay != null)
         {
             _overlay.Visible = true;
@@ -118,6 +124,7 @@ public sealed class RouteMakerMod : MelonMod
     private void OnFreeClimbEnded()
     {
         _editor?.Close();
+        _editor?.ShowRoute(null);
         _traveler.Cancel();
         _attempt.Reset();
         if (_overlay != null)
@@ -189,11 +196,6 @@ public sealed class RouteMakerMod : MelonMod
         {
             _lastZone = zone;
             LoggerInstance.Msg($"Zone: {zone ?? "(none)"}");
-            if (zone != null && (_editor != null || _storage.Exists(zone)))
-            {
-                EnsureEditor();
-                _editor.OnZoneChanged(zone);
-            }
         }
     }
 }

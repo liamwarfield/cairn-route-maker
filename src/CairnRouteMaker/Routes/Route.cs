@@ -58,6 +58,12 @@ public sealed class FinishZone
 /// </summary>
 public sealed class Route
 {
+    /// <summary>
+    /// The file it's saved in, without ".json"; set by <see cref="RouteStorage"/>, and null until
+    /// the route is first saved. It isn't written into the file.
+    /// </summary>
+    public string Id { get; set; }
+
     public string Name { get; set; } = "Untitled route";
 
     /// <summary>Which world/zone the coordinates belong to, e.g. "Kami/Zone_Foo".</summary>

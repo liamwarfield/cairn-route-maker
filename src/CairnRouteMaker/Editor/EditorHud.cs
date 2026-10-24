@@ -99,7 +99,7 @@ internal static class EditorHud
 
         var mode = editor.Mode switch { StrokeMode.Allow => "ALLOW", StrokeMode.Deny => "DENY", _ => "ERASE" };
         var text =
-            $"ROUTE EDITOR - {route.ZoneKey}\n" +
+            $"ROUTE EDITOR - {RouteName(route)}\n" +
             $"Brush: {mode}  radius {editor.Radius:0.00} m" +
             $"{(editor.HasBrushTarget ? "" : "  (no rock under brush)")}\n" +
             $"Strokes: {route.Strokes.Count}  stamps: {stamps}  start: {(route.Start == null ? "not set" : "set")}" +
@@ -112,12 +112,15 @@ internal static class EditorHud
     private static void DrawFreecamPanel(RouteEditor editor)
     {
         var text =
-            $"FREECAM - {editor.Route.ZoneKey}\n" +
+            $"FREECAM - {RouteName(editor.Route)}\n" +
             $"{(editor.HasBrushTarget ? "" : "No rock under the marker")}\n\n" +
             (editor.Input.UsingGamepad ? _freecamGamepadHelp : _freecamKeyboardHelp);
         GUI.Box(new Rect(Screen.width - 490, 20, 470, 104), text);
         DrawReticle(editor);
     }
+
+    /// <summary>"Route 2 · Well", or "no route".</summary>
+    private static string RouteName(Route route) => route == null ? "no route" : $"{route.Name} · {ZoneNames.PrettyKey(route.ZoneKey)}";
 
     private static void DrawReticle(RouteEditor editor)
     {

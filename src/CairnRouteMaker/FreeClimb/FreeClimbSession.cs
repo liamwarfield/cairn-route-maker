@@ -37,7 +37,8 @@ internal sealed class FreeClimbSession
 
     public bool IsActive { get; private set; }
 
-    public event Action Started;
+    /// <summary>A session began, with the route chosen in the launcher, or null for none.</summary>
+    public event Action<Route> Started;
 
     public event Action Ended;
 
@@ -102,10 +103,9 @@ internal sealed class FreeClimbSession
         MelonLogger.Msg($"Free climb started ({GameApi.DescribeGameSetup()}).");
         // A story-free game starts without them, and only the game's trigger volumes put them on.
         GameApi.EquipIceGear();
-        Started?.Invoke();
-
         var route = _pendingRoute;
         _pendingRoute = null;
+        Started?.Invoke(route);
         if (route?.Start != null)
         {
             var parts = route.ZoneKey.Split('/', 2);

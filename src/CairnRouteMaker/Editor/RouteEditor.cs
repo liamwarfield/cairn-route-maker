@@ -14,6 +14,9 @@ namespace CairnRouteMaker.Editor;
 /// game's own input is blocked and devices are read directly (see <see cref="EditorInput"/>).
 /// It has a second mode, freecam: the same camera with a marker instead of the brush, for looking
 /// around and moving Ava, which can't change the route.
+///
+/// It shows one route at a time, or none: routes are chosen in the menus, never picked for Ava by
+/// where she is. Switching to editing with no route showing starts a new one in Ava's zone.
 /// </summary>
 internal sealed class RouteEditor
 {
@@ -32,6 +35,9 @@ internal sealed class RouteEditor
     /// <summary>A new stamp is laid once the brush has moved this fraction of its radius.</summary>
     private const float StampSpacing = 0.35f;
 
+    /// <summary>How long Ava must be settled in a route's zone before its paint is drawn.</summary>
+    private const float PaintSettleSeconds = 2f;
+
     private enum UndoKind
     {
         Stroke,
@@ -49,6 +55,10 @@ internal sealed class RouteEditor
     private float _pitch;
     private Stroke _stroke;
     private bool _dirty;
+
+    /// <summary>The route's paint is waiting for its rock to load; see <see cref="DrawPaintWhenReady"/>.</summary>
+    private bool _paintPending;
+    private float _paintReadySince = -1f;
     private bool _sawInput;
     private float _nextStreamUpdate;
     private int _openedFrame;
@@ -67,7 +77,9 @@ internal sealed class RouteEditor
 
     /// <summary>Freecam mode: look around and move Ava, but no editing. Opening always starts here.</summary>
     public bool Freecam { get; private set; }
-    public Route Route { get; private set; } = new();
+
+    /// <summary>The route on show, or null. Never null while editing.</summary>
+    public Route Route { get; private set; }
     public StrokeMode Mode { get; private set; } = StrokeMode.Allow;
     public float Radius { get; private set; } = 0.6f;
     public bool HasBrushTarget { get; private set; }
@@ -82,21 +94,10 @@ internal sealed class RouteEditor
             return;
         }
 
-        var zone = GameApi.CurrentZoneKey;
-        if (!GameApi.IsAvaReady || zone == null)
+        if (!GameApi.IsAvaReady || GameApi.CurrentZoneKey == null)
         {
             SetStatus("Load into the mountain before opening the route editor.");
             return;
-        }
-
-        if (Route.IsEmpty || Route.ZoneKey != zone)
-        {
-            if (_dirty)
-            {
-                Save();
-            }
-
-            LoadOrCreate(zone);
         }
 
         _camera = GameApi.TakeCamera();
@@ -117,7 +118,7 @@ internal sealed class RouteEditor
         // Editing is always a deliberate switch (R3 / F8 by default), so nothing gets changed by accident.
         Freecam = true;
         IsOpen = true;
-        SetStatus(Freecam ? FreecamHint : $"Editing route for {Route.ZoneKey}.");
+        SetStatus(FreecamHint);
     }
 
     private static string FreecamHint =>
@@ -131,9 +132,14 @@ internal sealed class RouteEditor
         }
 
         EndStroke();
-        if (_dirty)
+        if (IsBlankNewRoute)
         {
-            Save();
+            _dirty = false;
+            SetRoute(null);
+        }
+        else
+        {
+            SaveChanges();
         }
 
         LevelSelect.Close();
@@ -146,22 +152,54 @@ internal sealed class RouteEditor
         IsOpen = false;
     }
 
+    /// <summary>Whether this is the route on show, the same saved file if not the same object.</summary>
+    public bool IsShowing(Route route) => route != null && (route == Route || (route.Id != null && route.Id == Route?.Id));
+
     /// <summary>
-    /// Show the saved route for a zone Ava has just entered. Zones without a saved route keep the
-    /// current one showing, so walking over a zone boundary mid-climb doesn't hide the route.
+    /// Show a saved route, or none. Walking into another zone keeps it showing, so a climb can
+    /// cross a zone boundary. Changes to the route it replaces are saved first.
     /// </summary>
-    public void OnZoneChanged(string zone)
+    public void ShowRoute(Route route)
     {
-        if (IsOpen || _dirty || zone == null || zone == Route.ZoneKey || !_storage.Exists(zone))
+        // The one already showing may have changes its file doesn't.
+        if (!IsShowing(route))
         {
+            SetRoute(route);
+        }
+    }
+
+    /// <summary>Start a new route in Ava's zone and switch to editing it.</summary>
+    public void EditNewRoute()
+    {
+        var zone = GameApi.CurrentZoneKey;
+        if (zone == null)
+        {
+            SetStatus("Load into the mountain before starting a route.");
             return;
         }
 
-        LoadOrCreate(zone);
-        SetStatus($"Showing the saved route for {zone}.");
+        var route = _storage.Create(zone);
+        route.GameVersion = GameApi.GameVersion;
+        SetRoute(route);
+        Freecam = false;
+        SetStatus($"New route: {route.Name} in {ZoneNames.PrettyKey(zone)}.");
     }
 
-    /// <summary>Switch between editing and freecam, opening in freecam if closed.</summary>
+    /// <summary>A route file was deleted from the menu: if it's the one on show, stop showing it.</summary>
+    public void OnRouteDeleted(Route route)
+    {
+        if (IsShowing(route))
+        {
+            // Its file is gone; saving now would bring it back.
+            _dirty = false;
+            SetRoute(null);
+        }
+    }
+
+    /// <summary>
+    /// Switch between editing and freecam, opening in freecam if closed. Editing with no route
+    /// on show starts a new one.
+    /// </summary>
     public void ToggleFreecam()
     {
         if (!IsOpen)
@@ -171,8 +209,25 @@ internal sealed class RouteEditor
         }
 
         EndStroke();
-        Freecam = !Freecam;
-        SetStatus(Freecam ? FreecamHint : $"Editing route for {Route.ZoneKey}.");
+        if (!Freecam)
+        {
+            Freecam = true;
+            SetStatus(FreecamHint);
+        }
+        else if (Route == null)
+        {
+            EditNewRoute();
+        }
+        else if (_paintPending)
+        {
+            // Undo and new strokes need the paint on screen to match the route.
+            SetStatus($"{Route.Name} can be edited once Ava is in {ZoneNames.PrettyKey(Route.ZoneKey)} and its paint is drawn.");
+        }
+        else
+        {
+            Freecam = false;
+            SetStatus($"Editing {Route.Name} ({ZoneNames.PrettyKey(Route.ZoneKey)}).");
+        }
     }
 
     /// <summary>
@@ -181,11 +236,10 @@ internal sealed class RouteEditor
     /// </summary>
     public void PlayTest()
     {
-        Close();
-        var zone = GameApi.CurrentZoneKey;
-        if (Route.IsEmpty && zone != null)
+        if (Route == null)
         {
-            LoadOrCreate(zone);
+            SetStatus("No route is showing: pick one in the level select.");
+            return;
         }
 
         var start = Route.Start;
@@ -195,6 +249,8 @@ internal sealed class RouteEditor
             return;
         }
 
+        Close();
+        var zone = GameApi.CurrentZoneKey;
         var position = RouteOverlay.ToUnity(start.Position);
         if (Route.ZoneKey != zone)
         {
@@ -222,6 +278,7 @@ internal sealed class RouteEditor
 
     public void Update()
     {
+        DrawPaintWhenReady();
         if (!IsOpen || _camera == null)
         {
             return;
@@ -258,7 +315,9 @@ internal sealed class RouteEditor
         {
             EndStroke();
             _overlay.HideBrush();
-            LevelSelect.Open(_storage, _traveler, SetStatus, OnRouteDeleted);
+            // So the menu lists the route as it is now.
+            SaveChanges();
+            LevelSelect.Open(this, _storage, _traveler, SetStatus);
             return;
         }
 
@@ -401,7 +460,7 @@ internal sealed class RouteEditor
 
     /// <summary>
     /// Run the highlighted menu entry. Travel closes the editor first (handing input and camera
-    /// back to the game); other entries just change the menu page.
+    /// back to the game); other entries change the menu page, or close it to carry on editing.
     /// </summary>
     private void ChooseLevel()
     {
@@ -423,21 +482,6 @@ internal sealed class RouteEditor
         {
             SetStatus($"Travelling to {_traveler.Destination}...");
         }
-    }
-
-    /// <summary>A route file was deleted from the menu: if it's the one being shown, start fresh.</summary>
-    private void OnRouteDeleted(string zone)
-    {
-        if (Route.ZoneKey != zone)
-        {
-            return;
-        }
-
-        EndStroke();
-        _undo.Clear();
-        Route = new Route { ZoneKey = zone, GameVersion = GameApi.GameVersion };
-        _dirty = false;
-        _overlay.Rebuild(Route);
     }
 
     /// <summary>Called after the game's own updates so our cursor state wins.</summary>
@@ -556,26 +600,79 @@ internal sealed class RouteEditor
         _dirty = true;
     }
 
-    private void LoadOrCreate(string zone)
+    /// <summary>Replace the route on show, saving changes to the old one. With none left to edit, go back to freecam.</summary>
+    private void SetRoute(Route route)
     {
+        EndStroke();
+        SaveChanges();
         _undo.Clear();
-        Route = new Route { ZoneKey = zone, GameVersion = GameApi.GameVersion };
-        if (_storage.Exists(zone))
+        Route = route;
+        _dirty = false;
+        _overlay.Rebuild(null);
+        _paintPending = route != null;
+        _paintReadySince = -1f;
+        DrawPaintWhenReady();
+        if (route == null || _paintPending)
         {
-            try
+            Freecam = true;
+        }
+        else
+        {
+            _overlay.Visible = true;
+        }
+
+        MelonLogger.Msg(route == null ? "No route showing." : $"Showing {route.Name} ({route.ZoneKey}, {route.Id ?? "not saved yet"}).");
+    }
+
+    /// <summary>
+    /// Draw the route once its rock is there to paint on: Ava settled in its zone, on her feet or
+    /// climbing, with nothing loading and no trip under way. Paint finds the rock with raycasts
+    /// and remembers where there was none, so drawn any sooner (from another zone, during the
+    /// warp to the start, or in the zone the game briefly drops Ava in at launch) it would stay
+    /// invisible. A route with no paint has nothing to wait for.
+    /// </summary>
+    private void DrawPaintWhenReady()
+    {
+        if (!_paintPending)
+        {
+            return;
+        }
+
+        if (Route.Strokes.Count > 0)
+        {
+            var mode = GameApi.Switcher?.CurrentMode;
+            var settled = Route.ZoneKey == GameApi.CurrentZoneKey && GameApi.CanMoveAva(out _) && !_traveler.IsActive
+                && mode is Il2Cpp.PawnControllerSwitcher.Mode.Walking or Il2Cpp.PawnControllerSwitcher.Mode.Climbing;
+            if (!settled)
             {
-                Route = _storage.Load(zone);
-                MelonLogger.Msg($"Loaded route from {_storage.PathFor(zone)}");
+                _paintReadySince = -1f;
+                return;
             }
-            catch (Exception e)
+
+            if (_paintReadySince < 0f)
             {
-                MelonLogger.Error($"Couldn't load {_storage.PathFor(zone)}: {e.Message}");
-                SetStatus("Existing route file is unreadable; starting a new one (old file kept until you save).");
+                _paintReadySince = Time.unscaledTime;
+            }
+
+            if (Time.unscaledTime - _paintReadySince < PaintSettleSeconds)
+            {
+                return;
             }
         }
 
+        _paintPending = false;
         _overlay.Rebuild(Route);
-        _dirty = false;
+    }
+
+    /// <summary>A new route that nothing has been drawn on: it isn't worth a file, so it's dropped when left.</summary>
+    private bool IsBlankNewRoute => Route is { Id: null, IsEmpty: true };
+
+    private void SaveChanges()
+    {
+        if (_dirty && !IsBlankNewRoute)
+        {
+            Save();
+        }
     }
 
     private void Save()
@@ -585,7 +682,7 @@ internal sealed class RouteEditor
             Route.GameVersion = GameApi.GameVersion;
             var path = _storage.Save(Route);
             _dirty = false;
-            SetStatus("Route saved.");
+            SetStatus($"Saved {Route.Name}.");
             MelonLogger.Msg($"Saved route to {path}");
         }
         catch (Exception e)
