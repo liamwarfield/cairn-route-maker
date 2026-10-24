@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Run Cairn on an offscreen 1920x1080 display, so it works while the desktop is locked.
+#
+# A headless sway compositor provides the screen, Xwayland, screenshots (grim) and,
+# through vinput.py, a virtual keyboard and mouse. The game is started straight
+# through Proton with DISPLAY pointing at that Xwayland, so the real desktop and
+# its lock screen are never involved.
+#
+#   fake-screen start                  start the compositor and input daemon
+#   fake-screen game                   start (if needed), launch Cairn, wait for "Press any key"
+#   fake-screen shot [file] [scale%]   screenshot; prints the path (default scale 100%)
+#   fake-screen key <keysym> [hold_s]  tap a key: Return Escape Up Down F6 w space ...
+#   fake-screen down|up <keysym>       hold / release a key
+#   fake-screen type <text>
+#   fake-screen move <x> <y>           absolute pointer position in screen pixels
+#   fake-screen rel <dx> <dy>          relative mouse motion (camera look)
+#   fake-screen click [x y] [left|right|middle]
+#   fake-screen scroll <steps>         positive scrolls down
+#   fake-screen status
+#   fake-screen stop                   quit the game on this screen, then the compositor
+set -euo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DIR=${FAKE_SCREEN_DIR:-/tmp/cairn-fake-screen}
+W=${FAKE_SCREEN_W:-1920}
+H=${FAKE_SCREEN_H:-1080}
+STEAM=${STEAM_DIR:-$HOME/.local/share/Steam}
+GAME=$STEAM/steamapps/common/Cairn
+APPID=1588550
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+export VINPUT_SOCK=$DIR/vinput.sock FAKE_SCREEN_W=$W FAKE_SCREEN_H=$H
+
+die() { echo "fake-screen: $*" >&2; exit 1; }
+running() { [ -f "$DIR/sway.pid" ] && kill -0 "$(cat "$DIR/sway.pid")" 2>/dev/null; }
+wl() { cat "$DIR/wayland"; }
+xdisp() { cat "$DIR/display"; }
+
+# The Cairn.exe that `game` started, if it's still running. Wine overwrites its process
+# memory, so /proc/<pid>/environ can't tell which display a copy is on; record the pid instead.
+game_pid() {
+    local pid
+    pid=$(cat "$DIR/game.pid" 2>/dev/null) || return 0
+    if [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = Cairn.exe ]; then echo "$pid"; fi
+}
+
+start() {
+    if running; then
+        echo "fake screen already running: WAYLAND_DISPLAY=$(wl) DISPLAY=$(xdisp)"
+        return
+    fi
+    rm -rf "$DIR" && mkdir -p -m 700 "$DIR"
+    cat > "$DIR/sway.cfg" <<EOF
+output HEADLESS-1 resolution ${W}x${H} position 0 0
+xwayland force
+default_border none
+focus_follows_mouse no
+exec sh -c 'for i in \$(seq 100); do [ -n "\$DISPLAY" ] && break; sleep 0.1; done; echo "\$WAYLAND_DISPLAY" > $DIR/wayland.tmp; echo "\$DISPLAY" > $DIR/display.tmp; mv $DIR/wayland.tmp $DIR/wayland; mv $DIR/display.tmp $DIR/display'
+EOF
+    env -u DISPLAY -u WAYLAND_DISPLAY -u SWAYSOCK -u XAUTHORITY \
+        WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+        setsid sway --unsupported-gpu -c "$DIR/sway.cfg" > "$DIR/sway.log" 2>&1 < /dev/null &
+    echo $! > "$DIR/sway.pid"
+    for _ in $(seq 100); do [ -s "$DIR/display" ] && break; sleep 0.1; done
+    [ -s "$DIR/display" ] || die "sway did not come up; see $DIR/sway.log"
+
+    WAYLAND_DISPLAY=$(wl) setsid python3 -I "$HERE/vinput.py" serve > "$DIR/vinput.log" 2>&1 < /dev/null &
+    for _ in $(seq 50); do [ -S "$VINPUT_SOCK" ] && break; sleep 0.1; done
+    [ -S "$VINPUT_SOCK" ] || die "virtual input did not come up; see $DIR/vinput.log"
+    echo "fake screen up: ${W}x${H} WAYLAND_DISPLAY=$(wl) DISPLAY=$(xdisp)"
+}
+
+game() {
+    start
+    local other; other=$(pgrep -x Cairn.exe | xargs || true)
+    [ -z "$other" ] || die "Cairn is already running (pid $other); quit it first, one Proton prefix can't run two copies"
+
+    # Reuse the runtime and Proton build from Steam's most recent launch of the game.
+    local line runtime proton
+    line=$(cat "$STEAM/logs/console-linux.previous.txt" "$STEAM/logs/console-linux.txt" 2>/dev/null \
+        | grep -a "Game process added : AppID $APPID" | tail -1 || true)
+    runtime=$(sed -nE "s|.*'([^']*SteamLinuxRuntime[^']*)'/_v2-entry-point.*|\1|p" <<< "$line")
+    proton=$(sed -nE "s|.*'([^']*)'/proton waitforexitandrun.*|\1|p" <<< "$line")
+    runtime=${runtime:-$STEAM/steamapps/common/SteamLinuxRuntime_4}
+    proton=${proton:-$STEAM/steamapps/common/Proton Hotfix}
+
+    local launched; launched=$(date +%s)
+    # Redirect the whole subshell, or it keeps the caller's stdout open until the game exits.
+    (cd "$GAME" && exec env -u WAYLAND_DISPLAY -u XAUTHORITY DISPLAY="$(xdisp)" \
+        STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM" \
+        STEAM_COMPAT_DATA_PATH="$STEAM/steamapps/compatdata/$APPID" \
+        STEAM_COMPAT_INSTALL_PATH="$GAME" STEAM_COMPAT_APP_ID=$APPID \
+        SteamAppId=$APPID SteamGameId=$APPID \
+        WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-version=n,b}" \
+        setsid "$runtime/_v2-entry-point" --verb=waitforexitandrun -- \
+        "$proton/proton" waitforexitandrun "$GAME/Cairn.exe") > "$DIR/game.log" 2>&1 < /dev/null &
+    echo "launched Cairn with $(basename "$proton") on DISPLAY=$(xdisp); waiting for the title screen..."
+
+    # The mod logs this once the title menu exists. The studio logo and a camera move
+    # follow, and keys sent before "Press any key" shows (~10 s later) are dropped.
+    local log=$GAME/MelonLoader/Latest.log seen=
+    for _ in $(seq 150); do
+        # No other copy was running at launch, so the first Cairn.exe to appear is ours.
+        if [ -z "$seen" ]; then
+            seen=$(pgrep -x Cairn.exe | head -1 || true)
+            [ -z "$seen" ] || echo "$seen" > "$DIR/game.pid"
+        elif [ -z "$(game_pid)" ]; then
+            die "Cairn exited; see $DIR/game.log and $log"
+        fi
+        if [ "$(stat -c %Y "$log" 2>/dev/null || echo 0)" -ge "$launched" ] \
+            && grep -q "Added the Free Climb button" "$log"; then
+            sleep 12
+            echo "title screen ready (\"Press any key\"). MelonLoader log: $log"
+            return
+        fi
+        sleep 1
+    done
+    echo "fake-screen: no title screen in the mod's log after 150s; take a screenshot to see where it is" >&2
+}
+
+sock() { ls "$XDG_RUNTIME_DIR"/sway-ipc.*."$(cat "$DIR/sway.pid")".sock 2>/dev/null | head -1; }
+
+shot() {
+    running || die "not running; use: fake-screen start"
+    local out=${1:-$DIR/shot.png} scale=${2:-100%}
+    WAYLAND_DISPLAY=$(wl) grim "$out"
+    [ "$scale" = 100% ] || magick "$out" -resize "$scale" "$out"
+    echo "$out"
+}
+
+stop() {
+    if running; then
+        local pid; pid=$(game_pid)
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 20); do [ -z "$(game_pid)" ] && break; sleep 1; done
+        fi
+        kill "$(cat "$DIR/sway.pid")" 2>/dev/null || true
+    fi
+    rm -rf "$DIR"
+    echo "fake screen stopped"
+    local left; left=$(pgrep -x Cairn.exe | xargs || true)
+    [ -z "$left" ] || echo "Cairn is still running elsewhere (pid $left), probably on the real desktop; left it alone"
+}
+
+status() {
+    if running; then
+        echo "running: ${W}x${H} WAYLAND_DISPLAY=$(wl) DISPLAY=$(xdisp) SWAYSOCK=$(sock)"
+        local pid; pid=$(game_pid)
+        echo "Cairn on this screen: ${pid:-none}"
+    else
+        echo "not running"
+    fi
+}
+
+cmd=${1:-}
+shift || true
+case $cmd in
+    start) start ;;
+    game) game ;;
+    shot) shot "$@" ;;
+    stop) stop ;;
+    status) status ;;
+    key|down|up|type|move|rel|click|scroll)
+        running || die "not running; use: fake-screen start"
+        python3 -I "$HERE/vinput.py" "$cmd" "$@" ;;
+    *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
