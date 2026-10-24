@@ -47,10 +47,26 @@ internal static class ZoneNames
         ["29_Icefall"] = "Icefall",
         ["30_SnowWalk"] = "Snow Walk",
         ["31_Summit"] = "Summit",
+
+        // Tenzen's zones all share the in-game name "Tenzen", so these come from the scene names.
+        ["Tenzing_01_ClimbingGym"] = "Climbing Gym",
+        ["Tenzing_02_GymToMountain"] = "Gym to Mountain",
+        ["Tenzing_03_MountainBase"] = "Mountain Base",
+        ["Tenzing_04_MountainMid"] = "Mid-Mountain",
+        ["Tenzing_05_MountainTop"] = "Mountain Top",
+    };
+
+    /// <summary>Mountains whose in-game name differs from the code's.</summary>
+    private static readonly Dictionary<string, string> Worlds = new()
+    {
+        ["Tenzing"] = "Tenzen",
     };
 
     /// <summary>The readable name of a zone scene, or the name itself if there isn't one.</summary>
     public static string Pretty(string zone) => zone != null && Names.TryGetValue(zone, out var name) ? name : zone;
+
+    /// <summary>A mountain as the game names it ("Tenzing" is "Tenzen"), or the name itself.</summary>
+    public static string PrettyWorld(string world) => world != null && Worlds.TryGetValue(world, out var name) ? name : world;
 
     /// <summary>The readable zone name of a "World/Zone" key, or the key itself if it isn't one.</summary>
     public static string PrettyKey(string zoneKey)

@@ -10,7 +10,8 @@ namespace CairnRouteMaker.Editor;
 /// The mod's menu. Routes are listed under the zone they're in, and going somewhere also chooses
 /// which route to show there, if any. In game, the first page has the routes of Ava's zone (switch
 /// to one, start a new one, or show none), then the zones of the current mountain and the other
-/// mountains. A zone with routes opens a page of them; one without is travelled to straight away.
+/// mountains (each opening a page of its zones). A zone with routes opens a page of them; one
+/// without is travelled to straight away.
 /// "Manage saved routes" lists every route with travel and delete actions. On the title screen it's
 /// the free-climb launcher instead: a mountain, a zone, then one of its routes or a spawn point to
 /// start from without one. Pages are rebuilt each time they show.
@@ -183,42 +184,66 @@ internal sealed class LevelSelect
 
         if (GameApi.CurrentWorld is { } currentWorld)
         {
-            Add(Header($"Zones in {currentWorld}"));
-            foreach (var zone in GameApi.ZonesInCurrentWorld())
-            {
-                var name = zone.Name;
-                var count = CountIn(routes, $"{currentWorld}/{name}");
-                if (zone.IsCurrent)
-                {
-                    Add(new Entry(ZoneNames.Pretty(name), false, false, null, note: "you are here"));
-                }
-                else if (count > 0)
-                {
-                    Add(new Entry(ZoneNames.Pretty(name), false, true, () => Push(ShowLevels, () => ShowZoneRoutes(currentWorld, name)), note: RouteCount(count)));
-                }
-                else
-                {
-                    Add(new Entry(ZoneNames.Pretty(name), false, true, () => GoWithoutRoute(currentWorld, name), leavesEditor: true));
-                }
-            }
+            Add(Header($"Zones in {Mountain(currentWorld)}"));
+            AddZones(currentWorld, routes, ShowLevels);
         }
 
         Add(Header("Mountains"));
         foreach (var world in GameApi.Worlds())
         {
             // Locked worlds are allowed on purpose: this is a mapping tool, not a playthrough.
-            var note = world.IsCurrent ? "you are here" : null;
             var id = world.Id;
-            Add(new Entry(id.ToString(), false, !world.IsCurrent, () => GoWithoutRoute(id, null), leavesEditor: true, note: note));
+            var count = routes.FindAll(route => ZoneNames.World(route.ZoneKey) == id.ToString()).Count;
+            Add(new Entry(Mountain(id), false, !world.IsCurrent, () => Push(ShowLevels, () => ShowMountain(id)),
+                note: world.IsCurrent ? "you are here" : RouteCount(count)));
         }
 
         End();
     }
 
-    /// <summary>In game, another zone of this mountain that has routes.</summary>
+    /// <summary>In game, another mountain's zones.</summary>
+    private void ShowMountain(StreamingTweakables.World world)
+    {
+        Begin(Mountain(world), "Level Select", "Choose a zone to go to.");
+        AddZones(world, _storage.LoadAll(), () => ShowMountain(world));
+        End();
+    }
+
+    /// <summary>
+    /// A mountain's zones. One with routes opens a page of them; one without is travelled to with
+    /// no route. <paramref name="page"/> shows the page these are on, for coming back to it.
+    /// </summary>
+    private void AddZones(StreamingTweakables.World world, List<Route> routes, Action page)
+    {
+        var zones = GameApi.ZonesIn(world);
+        if (zones.Count == 0)
+        {
+            Add(new Entry("The game hasn't listed its zones.", false, false, null));
+        }
+
+        foreach (var zone in zones)
+        {
+            var name = zone.Name;
+            var count = CountIn(routes, $"{world}/{name}");
+            if (zone.IsCurrent)
+            {
+                Add(new Entry(ZoneNames.Pretty(name), false, false, null, note: "you are here"));
+            }
+            else if (count > 0)
+            {
+                Add(new Entry(ZoneNames.Pretty(name), false, true, () => Push(page, () => ShowZoneRoutes(world, name)), note: RouteCount(count)));
+            }
+            else
+            {
+                Add(new Entry(ZoneNames.Pretty(name), false, true, () => GoWithoutRoute(world, name), leavesEditor: true));
+            }
+        }
+    }
+
+    /// <summary>In game, a zone that has routes.</summary>
     private void ShowZoneRoutes(StreamingTweakables.World world, string zone)
     {
-        Begin(ZoneNames.Pretty(zone), $"Level Select · {world}", "Climb one of its routes, or go there without one.");
+        Begin(ZoneNames.Pretty(zone), $"Level Select · {Mountain(world)}", "Climb one of its routes, or go there without one.");
         Add(Header("Routes"));
         AddRoutes(_storage.LoadAll(), $"{world}/{zone}", RouteEntry);
         Add(Header("Without a route"));
@@ -247,7 +272,7 @@ internal sealed class LevelSelect
                 count += CountIn(routes, $"{id}/{zone.Name}");
             }
 
-            Add(new Entry(id.ToString(), false, zones.Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id)), note: RouteCount(count)));
+            Add(new Entry(Mountain(id), false, zones.Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id)), note: RouteCount(count)));
         }
 
         End();
@@ -255,7 +280,7 @@ internal sealed class LevelSelect
 
     private void ShowLaunchZones(StreamingTweakables.World world)
     {
-        Begin(world.ToString(), "Free Climb", "Choose a zone to start in.");
+        Begin(Mountain(world), "Free Climb", "Choose a zone to start in.");
         var routes = _storage.LoadAll();
         foreach (var zone in GameApi.LaunchableZones(world))
         {
@@ -285,7 +310,7 @@ internal sealed class LevelSelect
     {
         var name = zone.Name;
         var first = zone.Spawners[0];
-        Begin(ZoneNames.Pretty(name), $"Free Climb · {world}", "Climb one of its routes, or start without one.");
+        Begin(ZoneNames.Pretty(name), $"Free Climb · {Mountain(world)}", "Climb one of its routes, or start without one.");
         Add(Header("Routes"));
         AddRoutes(_storage.LoadAll(), $"{world}/{name}", route =>
             new Entry(route.Name, false, true, () => _launch(new LaunchTarget(world, name, first, route)), leavesEditor: true,
@@ -309,7 +334,7 @@ internal sealed class LevelSelect
 
     private void ShowLaunchSpawners(StreamingTweakables.World world, string zone, IReadOnlyList<string> spawners)
     {
-        Begin(ZoneNames.Pretty(zone), $"Free Climb · {world}", "Choose where to start.");
+        Begin(ZoneNames.Pretty(zone), $"Free Climb · {Mountain(world)}", "Choose where to start.");
         foreach (var spawner in spawners)
         {
             Add(new Entry(spawner, false, true, () => _launch(new LaunchTarget(world, zone, spawner, null)), leavesEditor: true));
@@ -415,7 +440,9 @@ internal sealed class LevelSelect
 
     /// <summary>"Well, Kami" for "Kami/09_Well".</summary>
     private static string Place(string zoneKey) =>
-        ZoneNames.World(zoneKey) is { } world ? $"{ZoneNames.PrettyKey(zoneKey)}, {world}" : ZoneNames.PrettyKey(zoneKey);
+        ZoneNames.World(zoneKey) is { } world ? $"{ZoneNames.PrettyKey(zoneKey)}, {ZoneNames.PrettyWorld(world)}" : ZoneNames.PrettyKey(zoneKey);
+
+    private static string Mountain(StreamingTweakables.World world) => ZoneNames.PrettyWorld(world.ToString());
 
     private static string Summary(Route route)
     {
