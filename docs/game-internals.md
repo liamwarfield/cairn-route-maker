@@ -28,7 +28,7 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
 - Full sequence in `FreeRoamManager.WarpRoutine` (**xref**):
   1. Wait while `CairnSceneManager.IsBusy()`.
   2. `PathRecorder.HaltPath()`.
-  3. `PawnManager.UnEquipAllIceClimbingDevices`.
+  3. Equip or unequip ice gear as the warp point says (see "Ice gear").
   4. `TransitionToMode`.
   5. `RobotPawnController.TeleportNearClimber`.
   6. Clean up pitons via `Lifeline`.
@@ -48,6 +48,24 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
   - `EndCriticalStatTimer(stat)` stops a stat's pass-out countdown. **sig**
 - Climbing stamina is per limb: `ClimbingV2PawnLimb.ResetStamina()`. **sig**
 - `GameDataManager.ResetSurvivalValues()` / `ResetStats()` also exist. They aren't used because what else they reset is unknown.
+
+## Ice gear (axes and crampons)
+
+Read by disassembly; the free-climb fix is confirmed in game.
+
+- **Whether she wears it:** `StoryEventManager.Instance` has a `shouldWearIceClimbingDevices` flag (`Get`/`SetShouldWearIceClimbingDevices`), saved with the game. `Init` clears it. Once Ava is ready, `TryActivateIceClimbingDevices` runs once and calls `PawnManager.EquipAllIceClimbigDevices` (sic) or `UnEquipAllIceClimbingDevices` to match it. **xref**
+- **What changes it:**
+  - `IceClimbingTrigger` volumes in the world (`equipIceClimbing` true or false). `OnTriggerEntered` acts only when `GameSetup.IsStoryDisabled`, so they're how Summit and free climb get the gear. At Icefall, the only loaded equip trigger is far below the spawn.
+  - `CutsceneStoryEvent.wearIceClimbingGearAfterCutsceneEnds` in the story.
+  - The map warp: `WarpRoutine` sets the flag from `FreeRoamWarpPoint.setIceEquipment`, then equips or unequips. A warp point with the flag off strips the gear. **xref**
+- **Per limb:** `EquipAllIceClimbigDevices(manageOutfitSkin, force)` calls `ClimbingV2PawnLimb.EquipIceClimbingDevice` on each limb. That sets `IsIceClimbingAllowed` (it doesn't need an inventory item). It also switches Ava to the ice outfit (`PawnSkinHandler.TryChangeBodyAndOutfitSkin(2)`).
+  - `WalkingPawnController.OnSwitchOn` clears every limb's flag, so they read false while she walks.
+  - `ClimbingV2PawnController.ResetGettingUpFromGround` re-equips when `IsWearingIceClimbingOutfit`. The outfit is the lasting state.
+  - On the wall, the auto-switch (`UpdateIceGearAutoSwitch*`) picks the tool or the bare hand or boot to suit the surface.
+- **What the mod does:**
+  - At the start of a free-climb session it sets the flag and calls `EquipAllIceClimbigDevices(true, false)`.
+  - Its warp point copies the current flag into `setIceEquipment`.
+  - In free climb, a Harmony prefix skips `IceClimbingTrigger.OnTriggerEntered` for unequip triggers.
 
 ## Limb attach (route scoring)
 
@@ -153,7 +171,7 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
 - **Safe teleport:** `FreeRoamManager.Instance.WarpToPoint(FreeRoamWarpPoint wp, Disk.IOOperationCallback onDone)`. This is the game's map warp. It shows a loading screen, then `WarpRoutine` runs (**xref**):
   1. Wait for `CairnSceneManager.IsBusy()` to clear.
   2. `PathRecorder.HaltPath()`.
-  3. Unequip ice tools.
+  3. Put on or take off ice gear as the warp point's `setIceEquipment` says.
   4. `TransitionToMode(wp.WarpMode, wp.TeleportDestination, ...)`.
   5. `RobotPawnController.TeleportNearClimber`.
   6. Detach and remove the last securing piton from the `Lifeline`.

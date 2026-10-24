@@ -541,7 +541,83 @@ internal static class GameApi
 
             return names.Count == 0 ? "none loaded" : string.Join("; ", names);
         });
+        Add("ice gear", DescribeIceGear);
+        Add("ice triggers", () =>
+        {
+            var triggers = Object.FindObjectsByType<IceClimbingTrigger>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var names = new List<string>();
+            foreach (var trigger in triggers)
+            {
+                var collider = trigger.GetComponent<Collider>();
+                var where = collider == null ? trigger.transform.position.ToString() : $"{collider.bounds.center} size {collider.bounds.size}";
+                names.Add($"{trigger.name} {(trigger.equipIceClimbing ? "equip" : "unequip")} at {where}{(trigger.gameObject.activeInHierarchy ? "" : " (inactive)")}");
+            }
+
+            return names.Count == 0 ? "none loaded" : string.Join("; ", names);
+        });
+        Add("ice surfaces", () => Object.FindObjectsByType<IceSurface>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Length.ToString());
         return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// Whether the game means Ava to wear her ice axes and crampons. A story-free game starts
+    /// with them off; only the game's ice trigger volumes, cutscenes and map warps change this.
+    /// </summary>
+    private static bool ShouldWearIceGear
+    {
+        get
+        {
+            var story = StoryEventManager.Instance;
+            return story != null && story.GetShouldWearIceClimbingDevices();
+        }
+    }
+
+    /// <summary>
+    /// Give Ava her ice axes and crampons, as the game's equip trigger volumes do: mark them as
+    /// worn (warps, respawns and saves go by that) and let every limb use them. The game still
+    /// switches each limb between its tool and bare hand or boot to suit the surface.
+    /// </summary>
+    public static void EquipIceGear()
+    {
+        try
+        {
+            var story = StoryEventManager.Instance;
+            var pawns = PawnManager.Instance;
+            if (story == null || pawns == null)
+            {
+                MelonLogger.Warning("Couldn't give Ava her ice gear: the game isn't ready.");
+                return;
+            }
+
+            var before = DescribeIceGear();
+            story.SetShouldWearIceClimbingDevices(true);
+            pawns.EquipAllIceClimbigDevices(true, false);
+            MelonLogger.Msg($"Gave Ava her ice gear: {before} -> {DescribeIceGear()}.");
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Warning($"Couldn't give Ava her ice gear: {e.Message}");
+        }
+    }
+
+    /// <summary>For the log: what the game wants and what each limb has (allowed / in hand).</summary>
+    private static string DescribeIceGear()
+    {
+        var parts = new List<string> { $"shouldWear={ShouldWearIceGear}" };
+        var climbing = Switcher == null ? null : Switcher.climbingPawnController;
+        if (climbing != null)
+        {
+            foreach (var target in LimbOrder)
+            {
+                var limb = climbing.GetLimb(target);
+                if (limb != null)
+                {
+                    parts.Add($"{target} allowed={limb.IsIceClimbingAllowed} active={limb.IsIceClimbingDeviceEquipped}");
+                }
+            }
+        }
+
+        return string.Join(", ", parts);
     }
 
     /// <summary>Loading, streaming or travelling: not a moment to start another trip.</summary>
@@ -846,9 +922,11 @@ internal static class GameApi
 
     /// <summary>
     /// Put Ava at a position using the game's own free-roam warp (what its map uses): it shows a
-    /// loading screen, takes her off the wall, unclips the rope from the last piton, stows ice
-    /// tools, brings the Climbot along and respawns her if needed. A bare TransitionToMode skips
-    /// all that and can leave her T-posed, so it's only the fallback when the warp isn't there.
+    /// loading screen, takes her off the wall, unclips the rope from the last piton, brings the
+    /// Climbot along and respawns her if needed. A bare TransitionToMode skips all that and can
+    /// leave her T-posed, so it's only the fallback when the warp isn't there.
+    /// The warp also puts on or takes off her ice gear as its warp point says, so our point keeps
+    /// whatever she has now.
     /// </summary>
     public static bool TryTeleportAva(Vector3 position, float yawDegrees, out string reason)
     {
@@ -867,6 +945,7 @@ internal static class GameApi
             go.transform.SetPositionAndRotation(position, rotation);
             var point = go.AddComponent<FreeRoamWarpPoint>();
             point.warpMode = PawnControllerSwitcher.Mode.Walking;
+            point.setIceEquipment = ShouldWearIceGear;
             try
             {
                 freeRoam.WarpToPoint(point, (Disk.IOOperationCallback)new Action<bool>(_ => Object.Destroy(go)));

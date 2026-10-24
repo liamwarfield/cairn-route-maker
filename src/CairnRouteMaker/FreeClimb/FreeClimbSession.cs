@@ -32,6 +32,7 @@ internal sealed class FreeClimbSession
     {
         _traveler = traveler;
         MainMenuPatches.MainMenuShown += End;
+        IceGearPatches.KeepIceGear = () => IsActive;
     }
 
     public bool IsActive { get; private set; }
@@ -99,6 +100,8 @@ internal sealed class FreeClimbSession
         _launched = false;
         GameApi.MarkRunAsCheating();
         MelonLogger.Msg($"Free climb started ({GameApi.DescribeGameSetup()}).");
+        // A story-free game starts without them, and only the game's trigger volumes put them on.
+        GameApi.EquipIceGear();
         Started?.Invoke();
 
         var route = _pendingRoute;
