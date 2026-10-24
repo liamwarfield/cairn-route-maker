@@ -63,7 +63,11 @@ public sealed class RouteMakerMod : MelonMod
                 UpdateAttempt();
             }
 
-            _overlay?.Flush();
+            // Drawing paint casts rays at the rock, so it waits out loading screens.
+            if (!GameApi.IsWorldBusy)
+            {
+                _overlay?.Flush();
+            }
         }
         catch (Exception e)
         {

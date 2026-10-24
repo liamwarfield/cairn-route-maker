@@ -221,7 +221,7 @@ internal sealed class RouteEditor
         else if (_paintPending)
         {
             // Undo and new strokes need the paint on screen to match the route.
-            SetStatus($"{Route.Name} can be edited once Ava is in {ZoneNames.PrettyKey(Route.ZoneKey)} and its paint is drawn.");
+            SetStatus($"{Route.Name} can be edited once its paint is drawn.");
         }
         else
         {
@@ -609,6 +609,9 @@ internal sealed class RouteEditor
         Route = route;
         _dirty = false;
         _overlay.Rebuild(null);
+        // The markers need no rock, so they show straight away.
+        _overlay.SetStart(route?.Start);
+        _overlay.SetFinish(route?.Finish);
         _paintPending = route != null;
         _paintReadySince = -1f;
         DrawPaintWhenReady();
@@ -625,11 +628,12 @@ internal sealed class RouteEditor
     }
 
     /// <summary>
-    /// Draw the route once its rock is there to paint on: Ava settled in its zone, on her feet or
-    /// climbing, with nothing loading and no trip under way. Paint finds the rock with raycasts
-    /// and remembers where there was none, so drawn any sooner (from another zone, during the
-    /// warp to the start, or in the zone the game briefly drops Ava in at launch) it would stay
-    /// invisible. A route with no paint has nothing to wait for.
+    /// Draw the route once its rock is there to paint on: Ava settled on its mountain, on her feet
+    /// or climbing, with nothing loading and no trip under way. Paint finds the rock with raycasts
+    /// and remembers where there was none, so drawn any sooner (during the trip or warp to the
+    /// start, or in the zone the game briefly drops Ava in on a zone trip) it would stay
+    /// invisible. It doesn't wait for the route's own zone: a route can start or run on into the
+    /// next one. A route with no paint has nothing to wait for.
     /// </summary>
     private void DrawPaintWhenReady()
     {
@@ -641,7 +645,7 @@ internal sealed class RouteEditor
         if (Route.Strokes.Count > 0)
         {
             var mode = GameApi.Switcher?.CurrentMode;
-            var settled = Route.ZoneKey == GameApi.CurrentZoneKey && GameApi.CanMoveAva(out _) && !_traveler.IsActive
+            var settled = ZoneNames.World(Route.ZoneKey) == ZoneNames.World(GameApi.CurrentZoneKey) && GameApi.CanMoveAva(out _) && !_traveler.IsActive
                 && mode is Il2Cpp.PawnControllerSwitcher.Mode.Walking or Il2Cpp.PawnControllerSwitcher.Mode.Climbing;
             if (!settled)
             {
