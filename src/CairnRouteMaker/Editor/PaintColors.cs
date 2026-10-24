@@ -6,12 +6,22 @@ using UnityEngine;
 
 namespace CairnRouteMaker.Editor;
 
+/// <summary>How route paint is drawn: a translucent fill, a glow along its edges, or both.</summary>
+internal enum PaintStyle
+{
+    FillAndGlow,
+    GlowOnly,
+    FillOnly,
+}
+
 /// <summary>
-/// The colours of allow and deny paint, which the brush preview and the next-grab indicator follow
-/// too. Picked on the menu's Paint Colours page and saved as #RRGGBB in UserData/MelonPreferences.cfg,
-/// where any other colour can be typed in while the game is closed. The default yellow and red are
-/// hard to tell apart with red-green colour blindness; the blue and orange preset stays distinct
-/// under simulated protanopia, deuteranopia and tritanopia.
+/// How route paint looks: the colours of allow and deny paint, which the brush preview and the
+/// next-grab indicator follow too, whether it's drawn as a fill, a glow along its edges or both,
+/// and whether the glow pulses. Set on the menu's Paint Colours page and saved in
+/// UserData/MelonPreferences.cfg, the colours as #RRGGBB, so any other colour can be typed in
+/// while the game is closed. The default yellow and red are hard to tell
+/// apart with red-green colour blindness; the blue and orange preset stays distinct under
+/// simulated protanopia, deuteranopia and tritanopia.
 /// </summary>
 internal static class PaintColors
 {
@@ -64,11 +74,18 @@ internal static class PaintColors
     private static MelonPreferences_Category _category;
     private static MelonPreferences_Entry<string> _allowEntry;
     private static MelonPreferences_Entry<string> _denyEntry;
+    private static MelonPreferences_Entry<string> _styleEntry;
+    private static MelonPreferences_Entry<bool> _pulseEntry;
 
     public static Color32 Allow { get; private set; } = Yellow.Color;
     public static Color32 Deny { get; private set; } = Red.Color;
+    public static PaintStyle Style { get; private set; } = PaintStyle.FillAndGlow;
+    public static bool GlowPulse { get; private set; } = true;
 
-    /// <summary>Raised after either colour changes.</summary>
+    public static bool ShowsFill => Style != PaintStyle.GlowOnly;
+    public static bool ShowsGlow => Style != PaintStyle.FillOnly;
+
+    /// <summary>Raised after anything here changes.</summary>
     public static event Action Changed;
 
     public static void Load()
@@ -76,8 +93,12 @@ internal static class PaintColors
         _category = MelonPreferences.CreateCategory("CairnRouteMaker", "Cairn Route Maker");
         _allowEntry = _category.CreateEntry("AllowPaintColor", ToHex(Yellow.Color), "Allow paint colour", "Route paint for holds Ava may use, as #RRGGBB.");
         _denyEntry = _category.CreateEntry("DenyPaintColor", ToHex(Red.Color), "Deny paint colour", "Route paint for holds that are off-route, as #RRGGBB.");
+        _styleEntry = _category.CreateEntry("PaintStyle", PaintStyle.FillAndGlow.ToString(), "Paint style", "FillAndGlow, GlowOnly or FillOnly.");
+        _pulseEntry = _category.CreateEntry("PaintGlowPulse", true, "Paint glow pulse", "Slowly pulse the glow along the edges of route paint.");
         Allow = Read(_allowEntry, Yellow.Color);
         Deny = Read(_denyEntry, Red.Color);
+        Style = ReadStyle(_styleEntry);
+        GlowPulse = _pulseEntry.Value;
     }
 
     public static Color32 Of(StrokeMode mode) => mode == StrokeMode.Allow ? Allow : Deny;
@@ -109,6 +130,37 @@ internal static class PaintColors
         Changed?.Invoke();
     }
 
+    public static void SetStyle(PaintStyle style)
+    {
+        Style = style;
+        if (_category != null)
+        {
+            _styleEntry.Value = style.ToString();
+            _category.SaveToFile(false);
+        }
+
+        Changed?.Invoke();
+    }
+
+    public static void SetGlowPulse(bool on)
+    {
+        GlowPulse = on;
+        if (_category != null)
+        {
+            _pulseEntry.Value = on;
+            _category.SaveToFile(false);
+        }
+
+        Changed?.Invoke();
+    }
+
+    public static string NameOf(PaintStyle style) => style switch
+    {
+        PaintStyle.GlowOnly => "Glow only",
+        PaintStyle.FillOnly => "Fill only",
+        _ => "Fill and glow",
+    };
+
     /// <summary>The palette name of a colour, or its hex for one typed into the preferences file.</summary>
     public static string NameOf(Color32 color)
     {
@@ -134,6 +186,17 @@ internal static class PaintColors
 
         MelonLogger.Warning($"{entry.Identifier} '{entry.Value}' in MelonPreferences.cfg isn't a #RRGGBB colour; using {ToHex(fallback)}.");
         return fallback;
+    }
+
+    private static PaintStyle ReadStyle(MelonPreferences_Entry<string> entry)
+    {
+        if (Enum.TryParse<PaintStyle>(entry.Value, true, out var style) && Enum.IsDefined(style))
+        {
+            return style;
+        }
+
+        MelonLogger.Warning($"{entry.Identifier} '{entry.Value}' in MelonPreferences.cfg isn't FillAndGlow, GlowOnly or FillOnly; using FillAndGlow.");
+        return PaintStyle.FillAndGlow;
     }
 
     private static bool TryParse(string text, out Color32 color)

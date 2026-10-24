@@ -1,4 +1,5 @@
 using CairnRouteMaker.Editor;
+using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using UnityEngine;
 
@@ -112,9 +113,7 @@ internal static class AttemptHud
         }
 
         const int size = 64;
-        _disc = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-        // Survive the game's asset unloading on zone changes (see DecalPaint.Keep).
-        _disc.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+        _disc = RuntimeAssets.Keep(new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear });
         var radius = size / 2f;
         for (var y = 0; y < size; y++)
         {

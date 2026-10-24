@@ -165,7 +165,7 @@ internal sealed class LevelSelect
         Add(new Entry("Saved routes", true, false, null));
         foreach (var route in _storage.LoadAll())
         {
-            Add(new Entry(ZoneNames.PrettyKey(route.ZoneKey), false, TryParseZone(route.ZoneKey, out _, out _), () => TravelTo(route), leavesEditor: true,
+            Add(new Entry(ZoneNames.PrettyKey(route.ZoneKey), false, GameApi.TryParseZoneKey(route.ZoneKey, out _, out _), () => _traveler.StartToRoute(route, _report), leavesEditor: true,
                 note: route.Start == null ? "no start set" : null));
         }
 
@@ -201,7 +201,7 @@ internal sealed class LevelSelect
         foreach (var route in _storage.LoadAll())
         {
             anyRoutes = true;
-            var spawner = TryParseZone(route.ZoneKey, out var world, out var zone) ? FirstSpawner(world, zone) : null;
+            var spawner = GameApi.TryParseZoneKey(route.ZoneKey, out var world, out var zone) ? FirstSpawner(world, zone) : null;
             var note = spawner == null ? "can't start a game here" : route.Start == null ? "no start set" : null;
             Add(new Entry(ZoneNames.PrettyKey(route.ZoneKey), false, spawner != null, () => _launch(new LaunchTarget(world, zone, spawner, route)), leavesEditor: true, note: note));
         }
@@ -292,8 +292,8 @@ internal sealed class LevelSelect
     private void ShowRouteActions(Route route)
     {
         Begin(ZoneNames.PrettyKey(route.ZoneKey), $"Saved Routes · {ZoneNames.World(route.ZoneKey)}", Summary(route));
-        var canTravel = TryParseZone(route.ZoneKey, out _, out _);
-        Add(new Entry(route.Start == null ? "Travel to this zone" : "Travel to the start", false, canTravel, () => TravelTo(route), leavesEditor: true));
+        var canTravel = GameApi.TryParseZoneKey(route.ZoneKey, out _, out _);
+        Add(new Entry(route.Start == null ? "Travel to this zone" : "Travel to the start", false, canTravel, () => _traveler.StartToRoute(route, _report), leavesEditor: true));
         Add(new Entry("Delete this route", false, true, () => Push(() => ShowRouteActions(route), () => ShowConfirmDelete(route))));
         End();
     }
@@ -341,20 +341,32 @@ internal sealed class LevelSelect
                 note: PaintColors.NameOf(color), swatches: new[] { color }));
         }
 
+        Add(new Entry("Style", false, true, () => ChangePaint(() => PaintColors.SetStyle(PaintColors.Style switch
+            {
+                PaintStyle.FillAndGlow => PaintStyle.GlowOnly,
+                PaintStyle.GlowOnly => PaintStyle.FillOnly,
+                _ => PaintStyle.FillAndGlow,
+            })), note: PaintColors.NameOf(PaintColors.Style)));
+        Add(new Entry("Glow pulse", false, true, () => ChangePaint(() => PaintColors.SetGlowPulse(!PaintColors.GlowPulse)),
+            note: PaintColors.GlowPulse ? "on" : "off"));
+
         Add(new Entry("Presets", true, false, null));
         foreach (var preset in PaintColors.Presets)
         {
-            Add(new Entry(preset.Name, false, true, () =>
-            {
-                // Redraw the swatches above, staying on this entry.
-                var index = Selected;
-                PaintColors.SetBoth(preset.Allow, preset.Deny);
-                ShowPaintColors();
-                Select(index);
-            }, note: preset.Note, swatches: new[] { preset.Allow, preset.Deny }));
+            Add(new Entry(preset.Name, false, true, () => ChangePaint(() => PaintColors.SetBoth(preset.Allow, preset.Deny)),
+                note: preset.Note, swatches: new[] { preset.Allow, preset.Deny }));
         }
 
         End();
+    }
+
+    /// <summary>Make a change from the Paint Colours page, then show it again on the same entry.</summary>
+    private void ChangePaint(Action change)
+    {
+        var index = Selected;
+        change();
+        ShowPaintColors();
+        Select(index);
     }
 
     private void ShowPaintChoices(StrokeMode mode)
@@ -397,25 +409,6 @@ internal sealed class LevelSelect
         var strokes = route.Strokes.Count;
         return $"{strokes} stroke{(strokes == 1 ? "" : "s")} · {(route.Start == null ? "no start" : "start set")}"
             + $" · {(route.Finish == null ? "no finish" : "finish set")}";
-    }
-
-    private void TravelTo(Route route)
-    {
-        if (!TryParseZone(route.ZoneKey, out var world, out var zone))
-        {
-            return;
-        }
-
-        var start = route.Start;
-        _traveler.Start(world, zone, start == null ? null : RouteOverlay.ToUnity(start.Position), start?.YawDegrees ?? 0f, _report);
-    }
-
-    private static bool TryParseZone(string zoneKey, out StreamingTweakables.World world, out string zone)
-    {
-        var parts = zoneKey.Split('/', 2);
-        zone = parts.Length == 2 ? parts[1] : null;
-        world = default;
-        return parts.Length == 2 && Enum.TryParse(parts[0], out world);
     }
 
     /// <summary>Go to a page, remembering how to come back to the current one.</summary>

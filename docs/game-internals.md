@@ -139,6 +139,8 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
   4. It computes `uv = (local.xz + 0.5) * _MainTex_ST * _TilingOffset`, then `(uv - 0.5) * _UvRescale + 0.5`.
 
   So the projection runs along the box's local **Y**: u follows local X and v follows local Z. It blends with the texture's alpha.
+
+  A texel colours every surface along its whole column through the box. To keep a projection shallow, scale the box along local Y. The transform is read live, so a non-uniform scale or a move while the decal is enabled takes effect right away.
 - **Decals added from code need their texture transform set on the material.** Their `MaterialPropertyBlock` stays empty (even after `UpdateMPB()`), so `_TilingOffset` and `_MainTex_ST` come from the material:
   - Set `_TilingOffset = (1, 1, 0, 0)`.
   - Reset `mainTextureScale` and `mainTextureOffset`.

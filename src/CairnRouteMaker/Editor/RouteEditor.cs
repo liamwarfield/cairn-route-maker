@@ -116,7 +116,7 @@ internal sealed class RouteEditor
         // Editing is always a deliberate switch (R3 / F8), so nothing gets changed by accident.
         Freecam = true;
         IsOpen = true;
-        SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
+        SetStatus(ModeStatus);
     }
 
     public void Close()
@@ -168,8 +168,10 @@ internal sealed class RouteEditor
 
         EndStroke();
         Freecam = !Freecam;
-        SetStatus(Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.");
+        SetStatus(ModeStatus);
     }
+
+    private string ModeStatus => Freecam ? "Freecam: A or click moves Ava to the marker." : $"Editing route for {Route.ZoneKey}.";
 
     /// <summary>
     /// Put Ava on the route's start, closing the editor first if it's open. If the route belongs
@@ -191,19 +193,13 @@ internal sealed class RouteEditor
             return;
         }
 
-        var position = RouteOverlay.ToUnity(start.Position);
-        if (Route.ZoneKey != zone)
+        if (Route.ZoneKey != zone && _traveler.StartToRoute(Route, SetStatus))
         {
-            var parts = Route.ZoneKey.Split('/', 2);
-            if (parts.Length == 2 && Enum.TryParse<Il2Cpp.StreamingTweakables.World>(parts[0], out var world))
-            {
-                _traveler.Start(world, parts[1], position, start.YawDegrees, SetStatus);
-                SetStatus($"Travelling to {Route.ZoneKey}...");
-                return;
-            }
+            SetStatus($"Travelling to {Route.ZoneKey}...");
+            return;
         }
 
-        if (GameApi.TryTeleportAva(position, start.YawDegrees, out var reason))
+        if (GameApi.TryTeleportAva(RouteOverlay.ToUnity(start.Position), start.YawDegrees, out var reason))
         {
             // Every attempt starts with Ava fresh, whatever the last climb took out of her.
             GameApi.RestoreAva();
@@ -430,10 +426,7 @@ internal sealed class RouteEditor
         }
 
         EndStroke();
-        _undo.Clear();
-        Route = new Route { ZoneKey = zone, GameVersion = GameApi.GameVersion };
-        _dirty = false;
-        _overlay.Rebuild(Route);
+        LoadOrCreate(zone);
     }
 
     /// <summary>Called after the game's own updates so our cursor state wins.</summary>
