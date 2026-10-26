@@ -11,6 +11,8 @@ namespace CairnRouteMaker.Editor;
 ///   left stick move, right stick look, LB/RB down/up, hold LT fast,
 ///   RT paint, X cycle brush, D-pad up/down brush size, Y set start, A set finish,
 ///   View undo, D-pad right save, Menu play-test, D-pad left level select, B close.
+///   With the line tool (the fourth brush): RT adds or drags points, D-pad down deletes the
+///   selected point and holding it clears the line; D-pad up does nothing.
 ///   In freecam: A moves Ava to the marker; editing controls do nothing.
 ///   R3 on its own switches between editing and freecam.
 ///   L3+R3 opens and closes the editor from anywhere (handled by the mod, not here).
@@ -27,12 +29,20 @@ internal sealed class EditorInput
     private const float StickLookSpeed = 140f;
     private const float MouseLookSensitivity = 0.12f;
 
+    /// <summary>Holding D-pad down this long with the line tool clears the line.</summary>
+    private const float ClearHoldSeconds = 1f;
+
     // R3 switches modes on release, so pressing it as half of L3+R3 doesn't also switch.
     private bool _rightStickDown;
     private bool _rightStickCombo;
+    private float _clearHeld;
+    private bool _clearFired;
 
     /// <summary>True once the gamepad was the last device touched; switches the brush to screen-centre aiming.</summary>
     public bool UsingGamepad { get; private set; }
+
+    /// <summary>Set by the editor while the line tool is in use: the D-pad edits points instead of sizing the brush.</summary>
+    public bool LineTool { get; set; }
 
     // Continuous controls, read each frame.
     public Vector3 Move { get; private set; }
@@ -59,6 +69,9 @@ internal sealed class EditorInput
     public bool LevelSelect { get; private set; }
     public bool Teleport { get; private set; }
     public bool ToggleFreecam { get; private set; }
+    public bool DeletePoint { get; private set; }
+    public bool ClearLine { get; private set; }
+    public bool ToggleLine { get; private set; }
 
     // Menu navigation (level select).
     public int MenuMove { get; private set; }
@@ -80,6 +93,8 @@ internal sealed class EditorInput
     {
         _rightStickDown = false;
         _rightStickCombo = false;
+        _clearHeld = 0f;
+        _clearFired = false;
     }
 
     public void Read(float dt)
@@ -100,6 +115,7 @@ internal sealed class EditorInput
         CycleBrush = false;
         SelectBrush = null;
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
+        DeletePoint = ClearLine = ToggleLine = false;
         MenuMove = 0;
         MenuConfirm = MenuBack = MenuClick = false;
 
@@ -145,6 +161,7 @@ internal sealed class EditorInput
             if (keyboard.digit1Key.wasPressedThisFrame) SelectBrush = 0;
             if (keyboard.digit2Key.wasPressedThisFrame) SelectBrush = 1;
             if (keyboard.digit3Key.wasPressedThisFrame) SelectBrush = 2;
+            if (keyboard.digit4Key.wasPressedThisFrame) SelectBrush = 3;
             SetStart |= keyboard.gKey.wasPressedThisFrame;
             SetFinish |= keyboard.fKey.wasPressedThisFrame;
             Undo |= ctrl && keyboard.zKey.wasPressedThisFrame;
@@ -153,6 +170,10 @@ internal sealed class EditorInput
             // F6 and F8 (freecam) are handled by the mod itself, so they work with the editor closed too.
             Close |= keyboard.escapeKey.wasPressedThisFrame;
             LevelSelect |= keyboard.lKey.wasPressedThisFrame;
+            var deleteKey = keyboard.backspaceKey.wasPressedThisFrame || keyboard.deleteKey.wasPressedThisFrame;
+            DeletePoint |= deleteKey && !ctrl;
+            ClearLine |= deleteKey && ctrl;
+            ToggleLine |= keyboard.hKey.wasPressedThisFrame;
 
             if (keyboard.upArrowKey.wasPressedThisFrame || keyboard.wKey.wasPressedThisFrame) MenuMove -= 1;
             if (keyboard.downArrowKey.wasPressedThisFrame || keyboard.sKey.wasPressedThisFrame) MenuMove += 1;
@@ -183,8 +204,15 @@ internal sealed class EditorInput
             paintPressed |= trigger.wasPressedThisFrame;
             paintReleased |= trigger.wasReleasedThisFrame;
 
-            if (pad.dpad.up.isPressed) brushScale *= Mathf.Pow(2f, dt);
-            if (pad.dpad.down.isPressed) brushScale /= Mathf.Pow(2f, dt);
+            if (LineTool)
+            {
+                ReadLineDpad(pad, dt);
+            }
+            else
+            {
+                if (pad.dpad.up.isPressed) brushScale *= Mathf.Pow(2f, dt);
+                if (pad.dpad.down.isPressed) brushScale /= Mathf.Pow(2f, dt);
+            }
 
             CycleBrush |= pad.buttonWest.wasPressedThisFrame;
             SetStart |= pad.buttonNorth.wasPressedThisFrame;
@@ -227,6 +255,26 @@ internal sealed class EditorInput
         PaintPressed = paintPressed;
         PaintReleased = paintReleased;
         BrushScale = brushScale;
+    }
+
+    /// <summary>D-pad down deletes a point; held on, it clears the whole line once.</summary>
+    private void ReadLineDpad(Gamepad pad, float dt)
+    {
+        var down = pad.dpad.down;
+        DeletePoint |= down.wasPressedThisFrame;
+        if (!down.isPressed)
+        {
+            _clearHeld = 0f;
+            _clearFired = false;
+            return;
+        }
+
+        _clearHeld += dt;
+        if (_clearHeld >= ClearHoldSeconds && !_clearFired)
+        {
+            ClearLine = true;
+            _clearFired = true;
+        }
     }
 
     private static Vector2 Deadzone(Vector2 stick) => stick.magnitude < StickDeadzone ? Vector2.zero : stick;

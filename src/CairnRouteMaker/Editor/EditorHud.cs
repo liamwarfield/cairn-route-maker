@@ -11,16 +11,31 @@ internal static class EditorHud
     private const string KeyboardHelp =
         "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
         "Hold RMB look   LMB paint   Scroll or [ ] brush size\n" +
-        "Tab or 1/2/3 allow/deny/erase   G set start (facing = camera)\n" +
-        "F set finish (brush size, at least 1 m)\n" +
+        "Tab or 1-4 allow/deny/erase/line   G set start (facing = camera)\n" +
+        "F set finish (brush size, at least 1 m)   H show/hide line\n" +
         "Ctrl+Z undo   Ctrl+S save   P play-test   L level select   Esc exit\n" +
         "F8 freecam";
 
     private const string GamepadHelp =
         "LS move   RS look   LB/RB down/up   hold LT fast\n" +
-        "RT paint   D-pad up/down brush size   X allow/deny/erase\n" +
+        "RT paint   D-pad up/down brush size   X allow/deny/erase/line\n" +
         "Y set start   A set finish (brush size)   View undo\n" +
         "D-pad right save   Menu play-test\n" +
+        "D-pad left level select   B or L3+R3 exit   R3 freecam";
+
+    private const string LineKeyboardHelp =
+        "WASD move   Q/E down/up   Shift fast   Alt medium\n" +
+        "Hold RMB look   LMB add point, or drag a point or the line\n" +
+        "Backspace delete point   Ctrl+Backspace clear line\n" +
+        "Tab or 1-4 tool   G set start   F set finish   H show/hide line\n" +
+        "Ctrl+Z undo   Ctrl+S save   P play-test   L level select   Esc exit\n" +
+        "F8 freecam";
+
+    private const string LineGamepadHelp =
+        "LS move   RS look   LB/RB down/up   hold LT fast\n" +
+        "RT add point, or drag a point or the line   X tool\n" +
+        "D-pad down delete point (hold: clear line)   View undo\n" +
+        "Y set start   A set finish   D-pad right save   Menu play-test\n" +
         "D-pad left level select   B or L3+R3 exit   R3 freecam";
 
     private const string FreecamKeyboardHelp =
@@ -69,15 +84,32 @@ internal static class EditorHud
         }
 
         var mode = editor.Mode switch { StrokeMode.Allow => "ALLOW", StrokeMode.Deny => "DENY", _ => "ERASE" };
+        var tool = editor.LineTool
+            ? $"Tool: LINE  {LineSummary(route.Line.Count, editor.SelectedPoint)}"
+            : $"Brush: {mode}  radius {editor.Radius:0.00} m";
+        var help = editor.LineTool
+            ? editor.Input.UsingGamepad ? LineGamepadHelp : LineKeyboardHelp
+            : editor.Input.UsingGamepad ? GamepadHelp : KeyboardHelp;
         var text =
             $"ROUTE EDITOR - {route.ZoneKey}\n" +
-            $"Brush: {mode}  radius {editor.Radius:0.00} m" +
+            tool +
             $"{(editor.HasBrushTarget ? "" : "  (no rock under brush)")}\n" +
-            $"Strokes: {route.Strokes.Count}  stamps: {stamps}  start: {(route.Start == null ? "not set" : "set")}" +
+            $"Strokes: {route.Strokes.Count}  stamps: {stamps}  line: {route.Line.Count}  start: {(route.Start == null ? "not set" : "set")}" +
             $"  finish: {(route.Finish == null ? "not set" : "set")}\n\n" +
-            (editor.Input.UsingGamepad ? GamepadHelp : KeyboardHelp);
+            help;
         GUI.Box(new Rect(Screen.width - 450, 20, 430, 184), text);
         DrawReticle(editor);
+    }
+
+    private static string LineSummary(int points, int selected)
+    {
+        if (points == 0)
+        {
+            return "no points yet";
+        }
+
+        var which = selected >= 0 && selected < points ? selected + 1 : points;
+        return $"{points} point{(points == 1 ? "" : "s")}, point {which} selected";
     }
 
     private static void DrawFreecamPanel(RouteEditor editor)
