@@ -2,4 +2,7 @@
 
 # cairn-route-maker
 
-I'd like to make a mod for the game *Cairn* by The Game Bakers.
+This my attempt at adding features that I want in the game SOO bad:
+
+1. Teleport to climbs.
+2. Create routes!
