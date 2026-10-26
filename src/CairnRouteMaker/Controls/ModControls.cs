@@ -113,14 +113,27 @@ internal static class ModControls
     public static readonly Control GoToStart = new("GoToStart", ControlSection.RouteEditor, ControlModes.Both, "Teleport to route start", "<Keyboard>/f7", null);
     public static readonly Control ShowRoute = new("ShowRoute", ControlSection.RouteEditor, ControlModes.Both, "Show / hide route", "<Keyboard>/f9", null);
     public static readonly Control Paint = new("Paint", ControlSection.RouteEditor, ControlModes.RouteEditor, "Paint", "<Mouse>/leftButton", "<Gamepad>/rightTrigger");
-    public static readonly Control CycleBrush = new("CycleBrush", ControlSection.RouteEditor, ControlModes.RouteEditor, "Cycle allow / deny / erase", "<Keyboard>/tab", "<Gamepad>/buttonWest");
+    public static readonly Control CycleBrush = new("CycleBrush", ControlSection.RouteEditor, ControlModes.RouteEditor, "Cycle allow / deny / erase / line", "<Keyboard>/tab", "<Gamepad>/buttonWest");
     public static readonly Control AllowBrush = new("AllowBrush", ControlSection.RouteEditor, ControlModes.RouteEditor, "Allow brush", "<Keyboard>/1", null);
     public static readonly Control DenyBrush = new("DenyBrush", ControlSection.RouteEditor, ControlModes.RouteEditor, "Deny brush", "<Keyboard>/2", null);
     public static readonly Control EraseBrush = new("EraseBrush", ControlSection.RouteEditor, ControlModes.RouteEditor, "Erase brush", "<Keyboard>/3", null);
+    public static readonly Control LineTool = new("LineTool", ControlSection.RouteEditor, ControlModes.RouteEditor, "Line tool", "<Keyboard>/4", null);
     public static readonly Control BrushBigger = new("BrushBigger", ControlSection.RouteEditor, ControlModes.RouteEditor, "Bigger brush", "<Keyboard>/rightBracket", "<Gamepad>/dpad/up");
     public static readonly Control BrushSmaller = new("BrushSmaller", ControlSection.RouteEditor, ControlModes.RouteEditor, "Smaller brush", "<Keyboard>/leftBracket", "<Gamepad>/dpad/down");
     public static readonly Control SetStart = new("SetStart", ControlSection.RouteEditor, ControlModes.RouteEditor, "Set start", "<Keyboard>/g", "<Gamepad>/buttonNorth");
     public static readonly Control SetFinish = new("SetFinish", ControlSection.RouteEditor, ControlModes.RouteEditor, "Set finish", "<Keyboard>/f", "<Gamepad>/buttonSouth");
+    public static readonly Control ShowLine = new("ShowLine", ControlSection.RouteEditor, ControlModes.Both, "Show / hide route line", "<Keyboard>/h", null);
+
+    // Only read while the line tool is in use, when the D-pad doesn't size the brush, so it shares
+    // D-pad down with Smaller brush on purpose; left out of the clash checks for that reason.
+    // With Ctrl on the keyboard, or held for a second on a gamepad, it clears the whole line.
+    public static readonly Control DeletePoint = new("DeletePoint", ControlSection.RouteEditor, ControlModes.None,
+        "Delete line point (with Ctrl: delete line)", "<Keyboard>/backspace", "<Gamepad>/dpad/down", "Delete line point (hold: delete line)");
+
+    // Shares D-pad up with Bigger brush the same way. Tapped on a gamepad it changes the colour, held it starts a new line.
+    public static readonly Control LineColor = new("LineColor", ControlSection.RouteEditor, ControlModes.None,
+        "Next line colour", "<Keyboard>/c", "<Gamepad>/dpad/up", "Next line colour (hold: new line)");
+    public static readonly Control NewLine = new("NewLine", ControlSection.RouteEditor, ControlModes.RouteEditor, "New route line", "<Keyboard>/n", null);
 
     // Ctrl+key on the keyboard. The remap screen only rebinds the key, so these are left out of its
     // clash checks: S would always clash with Move back.
@@ -133,7 +146,7 @@ internal static class ModControls
         MoveForward, MoveBack, MoveLeft, MoveRight, MoveDown, MoveUp, Fast, Medium, Look,
         Teleport, PlayTest, LevelSelect, Exit, ToggleFreecam,
         OpenEditor, GoToStart, ShowRoute, Paint, CycleBrush, AllowBrush, DenyBrush, EraseBrush,
-        BrushBigger, BrushSmaller, SetStart, SetFinish, Undo, Save,
+        LineTool, BrushBigger, BrushSmaller, SetStart, SetFinish, ShowLine, DeletePoint, LineColor, NewLine, Undo, Save,
     };
 
     private static string _savePath;

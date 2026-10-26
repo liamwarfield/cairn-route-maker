@@ -108,11 +108,7 @@ internal sealed class FreeClimbSession
         Started?.Invoke(route);
         if (route?.Start != null)
         {
-            var parts = route.ZoneKey.Split('/', 2);
-            if (parts.Length == 2 && Enum.TryParse<Il2Cpp.StreamingTweakables.World>(parts[0], out var world))
-            {
-                _traveler.Start(world, parts[1], RouteOverlay.ToUnity(route.Start.Position), route.Start.YawDegrees, message => MelonLogger.Msg(message));
-            }
+            _traveler.StartToRoute(route, message => MelonLogger.Msg(message));
         }
     }
 

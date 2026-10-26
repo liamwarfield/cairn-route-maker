@@ -139,6 +139,9 @@ Read by disassembly; the free-climb fix is confirmed in game.
   - `Helpers.DrawGLLine` / `DrawGLQuad` with `Helpers.GLLineMaterial`.
   - `TGBDecal` / `TGBDecalsManager`.
   - `ColliderHighlighter`, `ClimbPathRenderer`.
+  - The map's routes look like node lists (`nodes`, `MAX_NODES_PER_ROUTE`) drawn with pixel-width outlines (`outlinePixelWidth`, `outline2PixelWidth`, `lineWidthMulitplier`) through a command buffer (`AddPathRenderersToCommandBuffer`). **sig**; whether the nodes are spline control points or a dense polyline is a **guess**.
+  - The map (eagle eye) UI is `EagleEyeUI`. Its "Display route" button (Alt) calls `OnShowAavaPathInput()`, which sets `pathOn` and shows or hides Ava's recorded path (`PathRecorder.ShowPath` / `HidePath` / `PathIsDisplayed`, `OnPathDisplayHasChanged`). The mod follows `pathOn` after each press to show or hide the route line. **sig**; that `pathOn` is already updated when the method returns is a **guess**. Its "Read map" (Space) view is the topology view (`SetTopologyView`, `topologyDifficultyWidget` is the Easier/Harder legend).
+  - The route line (`RouteLine`) asks for `Hidden/Internal-Colored` first: it multiplies in vertex colours and takes `_ZTest`, `_ZWrite`, `_Cull`, `_SrcBlend` and `_DstBlend` as properties. Whether the game's build includes it is a **guess** until the log's "Route line shader" line says so.
   - CairnMP draws trails with `LineRenderer` and the first shader it finds among `Sprites/Default`, `Universal Render Pipeline/Unlit` and `Unlit/Color`.
 - `StreamingAssets/GHOSTS` holds recordings of climbing ghosts (tutorial holograms, rivals, community runs), played by `GhostsManager`. It contains no route data.
 
@@ -157,6 +160,8 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
   4. It computes `uv = (local.xz + 0.5) * _MainTex_ST * _TilingOffset`, then `(uv - 0.5) * _UvRescale + 0.5`.
 
   So the projection runs along the box's local **Y**: u follows local X and v follows local Z. It blends with the texture's alpha.
+
+  A texel colours every surface along its whole column through the box. To keep a projection shallow, scale the box along local Y. The transform is read live, so a non-uniform scale or a move while the decal is enabled takes effect right away.
 - **Decals added from code need their texture transform set on the material.** Their `MaterialPropertyBlock` stays empty (even after `UpdateMPB()`), so `_TilingOffset` and `_MainTex_ST` come from the material:
   - Set `_TilingOffset = (1, 1, 0, 0)`.
   - Reset `mainTextureScale` and `mainTextureOffset`.

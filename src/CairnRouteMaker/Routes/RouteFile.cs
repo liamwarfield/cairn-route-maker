@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -13,8 +14,11 @@ namespace CairnRouteMaker.Routes;
 /// </summary>
 public static class RouteFile
 {
-    /// <summary>2 added erase strokes, 3 the finish; older files read unchanged.</summary>
-    public const int FormatVersion = 3;
+    /// <summary>
+    /// 2 added erase strokes, 3 the finish, 4 a route line, 5 several lines with colours; older
+    /// files read unchanged (a version 4 line becomes one green line).
+    /// </summary>
+    public const int FormatVersion = 5;
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -52,6 +56,12 @@ public static class RouteFile
                         .ToArray(),
                 })
                 .ToArray(),
+            Lines = route.Lines.TrueForAll(line => line.Points.Count == 0)
+                ? null
+                : route.Lines
+                    .Where(line => line.Points.Count > 0)
+                    .Select(line => new LineDto { Grade = line.Grade, Points = ToDtos(line.Points) })
+                    .ToArray(),
         };
         return JsonSerializer.Serialize(dto, Options);
     }
@@ -93,7 +103,32 @@ public static class RouteFile
             route.Strokes.Add(stroke);
         }
 
+        foreach (var lineDto in dto.Lines ?? Array.Empty<LineDto>())
+        {
+            var line = new ClimbLine { Grade = lineDto.Grade };
+            AddPoints(line, lineDto.Points);
+            route.Lines.Add(line);
+        }
+
+        if (dto.Line is { Length: > 0 })
+        {
+            var line = new ClimbLine();
+            AddPoints(line, dto.Line);
+            route.Lines.Add(line);
+        }
+
         return route;
+    }
+
+    private static LinePointDto[] ToDtos(List<LinePoint> points) =>
+        points.Select(point => new LinePointDto { P = ToArray(point.Position), N = ToArray(point.Normal) }).ToArray();
+
+    private static void AddPoints(ClimbLine line, LinePointDto[] points)
+    {
+        foreach (var pointDto in points ?? Array.Empty<LinePointDto>())
+        {
+            line.Points.Add(new LinePoint(FromArray(pointDto.P), FromArray(pointDto.N)));
+        }
     }
 
     private static float[] ToArray(Vector3 v) => new[] { v.X, v.Y, v.Z };
@@ -117,6 +152,16 @@ public static class RouteFile
         public StartDto Start { get; set; }
         public FinishDto Finish { get; set; }
         public StrokeDto[] Strokes { get; set; }
+        public LineDto[] Lines { get; set; }
+
+        /// <summary>Version 4's single line; only read.</summary>
+        public LinePointDto[] Line { get; set; }
+    }
+
+    private sealed class LineDto
+    {
+        public LineGrade Grade { get; set; }
+        public LinePointDto[] Points { get; set; }
     }
 
     private sealed class StartDto
@@ -135,6 +180,12 @@ public static class RouteFile
     {
         public StrokeMode Mode { get; set; }
         public StampDto[] Stamps { get; set; }
+    }
+
+    private sealed class LinePointDto
+    {
+        public float[] P { get; set; }
+        public float[] N { get; set; }
     }
 
     private sealed class StampDto

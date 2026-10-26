@@ -53,6 +53,20 @@ internal sealed class Traveler
         IsActive = true;
     }
 
+    /// <summary>Go to a route's zone, and onto its start if it has one.</summary>
+    /// <returns>False, without starting, if the route's zone key doesn't name a known world.</returns>
+    public bool StartToRoute(Route route, Action<string> report)
+    {
+        if (!GameApi.TryParseZoneKey(route.ZoneKey, out var world, out var zone))
+        {
+            return false;
+        }
+
+        var start = route.Start;
+        Start(world, zone, start == null ? null : RouteOverlay.ToUnity(start.Position), start?.YawDegrees ?? 0f, report);
+        return true;
+    }
+
     public void Cancel() => IsActive = false;
 
     public void Update()

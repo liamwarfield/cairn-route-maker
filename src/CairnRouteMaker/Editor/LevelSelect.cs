@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using Il2Cpp;
+using UnityEngine;
 
 namespace CairnRouteMaker.Editor;
 
@@ -14,13 +15,15 @@ namespace CairnRouteMaker.Editor;
 /// without is travelled to straight away.
 /// "Manage saved routes" lists every route with travel and delete actions. On the title screen it's
 /// the free-climb launcher instead: a mountain, a zone, then one of its routes or a spawn point to
-/// start from without one. Pages are rebuilt each time they show.
+/// start from without one. Both end with the settings: the paint colours (see <see cref="PaintColors"/>).
+/// Pages are rebuilt each time they show.
 /// </summary>
 internal sealed class LevelSelect
 {
     public sealed class Entry
     {
-        public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null)
+        public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null,
+            IReadOnlyList<Color32> swatches = null)
         {
             Label = label;
             IsHeader = isHeader;
@@ -28,12 +31,16 @@ internal sealed class LevelSelect
             Choose = choose;
             LeavesEditor = leavesEditor;
             Note = note;
+            Swatches = swatches;
         }
 
         public string Label { get; }
 
         /// <summary>Shown smaller and dimmer after the label, e.g. "you are here".</summary>
         public string Note { get; }
+
+        /// <summary>Colour squares shown between the label and the note, or null.</summary>
+        public IReadOnlyList<Color32> Swatches { get; }
         public bool IsHeader { get; }
         public bool Enabled { get; }
         public Action Choose { get; }
@@ -198,6 +205,7 @@ internal sealed class LevelSelect
                 note: world.IsCurrent ? "you are here" : RouteCount(count)));
         }
 
+        AddSettings(ShowLevels);
         End();
     }
 
@@ -275,6 +283,7 @@ internal sealed class LevelSelect
             Add(new Entry(Mountain(id), false, zones.Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id)), note: RouteCount(count)));
         }
 
+        AddSettings(ShowLaunch);
         End();
     }
 
@@ -444,11 +453,107 @@ internal sealed class LevelSelect
 
     private static string Mountain(StreamingTweakables.World world) => ZoneNames.PrettyWorld(world.ToString());
 
+    /// <summary>The settings section that ends the first page; <paramref name="page"/> is that page, to come back to.</summary>
+    private void AddSettings(Action page)
+    {
+        Add(new Entry("Settings", true, false, null));
+        Add(new Entry("Paint colours", false, true, () => Push(page, ShowPaintColors),
+            swatches: new[] { PaintColors.Allow, PaintColors.Deny }));
+    }
+
+    private void ShowPaintColors()
+    {
+        Begin("Paint Colours", "Settings", "Pick from the lists, or set any #RRGGBB in UserData/MelonPreferences.cfg.");
+        foreach (var mode in new[] { StrokeMode.Allow, StrokeMode.Deny })
+        {
+            var color = PaintColors.Of(mode);
+            Add(new Entry(mode == StrokeMode.Allow ? "Allow paint" : "Deny paint", false, true, () => Push(ShowPaintColors, () => ShowPaintChoices(mode)),
+                note: PaintColors.NameOf(color), swatches: new[] { color }));
+        }
+
+        Add(new Entry("Style", false, true, () => ChangePaint(() => PaintColors.SetStyle(PaintColors.Style switch
+            {
+                PaintStyle.FillAndGlow => PaintStyle.GlowOnly,
+                PaintStyle.GlowOnly => PaintStyle.FillOnly,
+                _ => PaintStyle.FillAndGlow,
+            })), note: PaintColors.NameOf(PaintColors.Style)));
+        Add(new Entry("Glow pulse", false, true, () => ChangePaint(() => PaintColors.SetGlowPulse(!PaintColors.GlowPulse)),
+            note: PaintColors.GlowPulse ? "on" : "off"));
+        Add(new Entry("Show route lines", false, true, () => ChangePaint(() => PaintColors.SetShowLine(!PaintColors.ShowLine)),
+            note: PaintColors.ShowLine ? "on" : "off"));
+
+        Add(new Entry("Presets", true, false, null));
+        foreach (var preset in PaintColors.Presets)
+        {
+            Add(new Entry(preset.Name, false, true, () => ChangePaint(() => PaintColors.ApplyPreset(preset)),
+                note: preset.Note, swatches: new[] { preset.Allow, preset.Deny }));
+        }
+
+        End();
+    }
+
+    /// <summary>Make a change from the Paint Colours page, then show it again on the same entry.</summary>
+    private void ChangePaint(Action change)
+    {
+        var index = Selected;
+        change();
+        ShowPaintColors();
+        Select(index);
+    }
+
+    private void ShowPaintChoices(StrokeMode mode)
+    {
+        var allow = mode == StrokeMode.Allow;
+        Begin(allow ? "Allow Paint" : "Deny Paint", "Settings · Paint Colours", allow ? "Paint for holds Ava may use." : "Paint for holds that are off-route.");
+        var current = PaintColors.Of(mode);
+        var other = PaintColors.Of(allow ? StrokeMode.Deny : StrokeMode.Allow);
+        var currentIndex = -1;
+        foreach (var choice in PaintColors.Palette)
+        {
+            var color = choice.Color;
+            string note = null;
+            if (PaintColors.Same(color, current))
+            {
+                note = "current";
+                currentIndex = _entries.Count;
+            }
+            else if (PaintColors.Same(color, other))
+            {
+                note = allow ? "swaps with deny paint" : "swaps with allow paint";
+            }
+
+            Add(new Entry(choice.Name, false, true, () =>
+            {
+                PaintColors.Set(mode, color);
+                Back();
+            }, note: note, swatches: new[] { color }));
+        }
+
+        End();
+        if (currentIndex >= 0)
+        {
+            Select(currentIndex);
+        }
+    }
+
     private static string Summary(Route route)
     {
         var strokes = route.Strokes.Count;
         return $"{strokes} stroke{(strokes == 1 ? "" : "s")} · {(route.Start == null ? "no start" : "start set")}"
-            + $" · {(route.Finish == null ? "no finish" : "finish set")}";
+            + $" · {(route.Finish == null ? "no finish" : "finish set")}"
+            + LineSummary(route);
+    }
+
+    /// <summary>" · blue line", " · 3 lines", or nothing.</summary>
+    private static string LineSummary(Route route)
+    {
+        var lines = route.Lines.FindAll(line => line.Points.Count >= 2);
+        return lines.Count switch
+        {
+            0 => "",
+            1 => $" · {LineColors.NameOf(lines[0].Grade).ToLowerInvariant()} line",
+            _ => $" · {lines.Count} lines",
+        };
     }
 
     private static int CountIn(List<Route> routes, string zoneKey) => routes.FindAll(route => route.ZoneKey == zoneKey).Count;

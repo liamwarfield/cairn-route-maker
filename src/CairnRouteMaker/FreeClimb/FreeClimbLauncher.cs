@@ -31,8 +31,6 @@ internal sealed class FreeClimbLauncher
         MainMenuPatches.SuppressCancel = () => _open || _unblockAtFrame >= 0;
     }
 
-    public bool IsOpen => _open;
-
     public void Open()
     {
         if (_open)

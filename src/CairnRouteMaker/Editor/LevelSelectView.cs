@@ -28,6 +28,11 @@ internal static class LevelSelectView
     private const float HeaderGap = 18f;
     private const float NoteGap = 18f;
 
+    /// <summary>Colour swatch side and the gap after each, as fractions of the font size.</summary>
+    private const float SwatchSize = 0.55f;
+    private const float SwatchGap = 0.25f;
+    private const int MaxSwatches = 3;
+
     /// <summary>The list fades out over this much at its top and bottom edges.</summary>
     private const float Fade = 44f;
     private const float PageFadeSeconds = 0.18f;
@@ -70,6 +75,7 @@ internal static class LevelSelectView
         public RectTransform Rect;
         public TextMeshProUGUI Label;
         public TextMeshProUGUI Note;
+        public Image[] Swatches;
         public float Top;
         public float Height;
         public bool Header;
@@ -297,6 +303,7 @@ internal static class LevelSelectView
                 label.characterSpacing = 12f;
                 label.alignment = TextAlignmentOptions.BottomLeft;
                 row.Note.gameObject.SetActive(false);
+                PlaceSwatches(row, null, 0f, size);
                 continue;
             }
 
@@ -307,11 +314,10 @@ internal static class LevelSelectView
 
             var note = row.Note;
             SetText(note, entry.Note, size * 0.5f, _style.NotSelected);
-            if (entry.Note != null)
-            {
-                var width = Mathf.Min(label.GetPreferredValues(entry.Label).x, label.rectTransform.rect.width);
-                note.rectTransform.anchoredPosition = new Vector2(width + NoteGap, 0f);
-            }
+            var afterLabel = entry.Note != null || entry.Swatches != null
+                ? Mathf.Min(label.GetPreferredValues(entry.Label).x, label.rectTransform.rect.width) + NoteGap
+                : 0f;
+            note.rectTransform.anchoredPosition = new Vector2(PlaceSwatches(row, entry.Swatches, afterLabel, size), 0f);
         }
 
         _contentHeight = y + Fade;
@@ -348,10 +354,44 @@ internal static class LevelSelectView
             noteRect.pivot = new Vector2(0f, 0.5f);
             noteRect.sizeDelta = new Vector2(600f, 0f);
 
-            Rows.Add(new Row { Rect = rect, Label = label, Note = note });
+            // Also children of the label: plain squares tinted with the entry's colours.
+            var swatches = new Image[MaxSwatches];
+            for (var i = 0; i < swatches.Length; i++)
+            {
+                var swatchRect = NewRect($"Swatch{i}", labelRect);
+                swatchRect.anchorMin = swatchRect.anchorMax = new Vector2(0f, 0.5f);
+                swatchRect.pivot = new Vector2(0f, 0.5f);
+                swatches[i] = swatchRect.gameObject.AddComponent<Image>();
+                swatches[i].raycastTarget = false;
+                swatchRect.gameObject.SetActive(false);
+            }
+
+            Rows.Add(new Row { Rect = rect, Label = label, Note = note, Swatches = swatches });
         }
 
         return Rows[index];
+    }
+
+    /// <summary>Show a row's colour swatches in a line starting at <paramref name="x"/>; returns where the line ends.</summary>
+    private static float PlaceSwatches(Row row, IReadOnlyList<Color32> colors, float x, float fontSize)
+    {
+        for (var i = 0; i < row.Swatches.Length; i++)
+        {
+            var swatch = row.Swatches[i];
+            var shown = colors != null && i < colors.Count;
+            swatch.gameObject.SetActive(shown);
+            if (!shown)
+            {
+                continue;
+            }
+
+            swatch.color = colors[i];
+            swatch.rectTransform.sizeDelta = Vector2.one * (fontSize * SwatchSize);
+            swatch.rectTransform.anchoredPosition = new Vector2(x, 0f);
+            x += fontSize * (SwatchSize + SwatchGap);
+        }
+
+        return x;
     }
 
     private static void Build()
@@ -474,7 +514,7 @@ internal static class LevelSelectView
     private static Sprite GradientSprite()
     {
         const int width = 256;
-        var texture = Keep(new Texture2D(width, 1, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
+        var texture = RuntimeAssets.Keep(new Texture2D(width, 1, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
         for (var x = 0; x < width; x++)
         {
             var fade = 1f - Mathf.SmoothStep(0f, 1f, x / (width - 1f));
@@ -482,14 +522,14 @@ internal static class LevelSelectView
         }
 
         texture.Apply();
-        return Keep(Sprite.Create(texture, new Rect(0f, 0f, width, 1f), new Vector2(0.5f, 0.5f)));
+        return RuntimeAssets.Keep(Sprite.Create(texture, new Rect(0f, 0f, width, 1f), new Vector2(0.5f, 0.5f)));
     }
 
     /// <summary>A right-pointing triangle, for when the title screen's arrow hasn't been seen.</summary>
     private static Sprite ArrowSprite()
     {
         const int size = 64;
-        var texture = Keep(new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
+        var texture = RuntimeAssets.Keep(new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
         var a = new Vector2(10f, 6f);
         var b = new Vector2(10f, 58f);
         var c = new Vector2(58f, 32f);
@@ -504,7 +544,7 @@ internal static class LevelSelectView
         }
 
         texture.Apply();
-        return Keep(Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f)));
+        return RuntimeAssets.Keep(Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f)));
     }
 
     /// <summary>Signed distance from the line a→b, positive to its right (inside, for a clockwise triangle).</summary>
@@ -512,13 +552,5 @@ internal static class LevelSelectView
     {
         var edge = (b - a).normalized;
         return edge.y * (p.x - a.x) - edge.x * (p.y - a.y);
-    }
-
-    /// <summary>Survive the game's asset unloading on scene changes (see DecalPaint.Keep).</summary>
-    private static T Keep<T>(T asset)
-        where T : Object
-    {
-        asset.hideFlags |= HideFlags.DontUnloadUnusedAsset;
-        return asset;
     }
 }

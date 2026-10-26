@@ -51,6 +51,38 @@ public sealed class FinishZone
     }
 }
 
+/// <summary>A control point of a route line: a spot on the rock and the rock's outward normal there.</summary>
+public readonly record struct LinePoint(Vector3 Position, Vector3 Normal);
+
+/// <summary>A route line's colour: the difficulty scale of the game's map, easiest first.</summary>
+public enum LineGrade
+{
+    Yellow,
+    Green,
+    Blue,
+    Red,
+    Black,
+    Purple,
+    White,
+}
+
+/// <summary>
+/// One route line: control points bottom to top, with a smooth curve drawn through them (see
+/// <see cref="RouteCurve"/>). It's only a guide and doesn't affect what counts as on-route.
+/// </summary>
+public sealed class ClimbLine
+{
+    public LineGrade Grade { get; set; } = LineGrade.Green;
+    public List<LinePoint> Points { get; } = new();
+
+    public ClimbLine Clone()
+    {
+        var copy = new ClimbLine { Grade = Grade };
+        copy.Points.AddRange(Points);
+        return copy;
+    }
+}
+
 /// <summary>
 /// A climbing route: an ordered list of allow/deny strokes plus where Ava starts and finishes.
 /// Anything not covered by a stroke is off-route, and later strokes override earlier ones,
@@ -74,7 +106,10 @@ public sealed class Route
     public FinishZone Finish { get; set; }
     public List<Stroke> Strokes { get; } = new();
 
-    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0;
+    /// <summary>The route's lines, e.g. the main line and its variants, each in its own colour.</summary>
+    public List<ClimbLine> Lines { get; } = new();
+
+    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0 && !Lines.Exists(line => line.Points.Count > 0);
 
     /// <summary>
     /// Whether a point counts as on-route: the last stroke containing it decides, and only an

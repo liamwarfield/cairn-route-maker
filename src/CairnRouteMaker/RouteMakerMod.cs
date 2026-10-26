@@ -33,6 +33,7 @@ public sealed class RouteMakerMod : MelonMod
 
     public override void OnInitializeMelon()
     {
+        PaintColors.Load();
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
         ModControls.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Controls.json"));
@@ -41,6 +42,7 @@ public sealed class RouteMakerMod : MelonMod
         _session.Ended += OnFreeClimbEnded;
         _launcher = new FreeClimbLauncher(_storage, _session);
         MainMenuPatches.FreeClimbClicked += _launcher.Open;
+        EagleEyePatches.DisplayRouteToggled += OnDisplayRouteToggled;
         LoggerInstance.Msg($"Loaded. Routes are stored in {directory}");
         LoggerInstance.Msg("Choose Free Climb on the title screen. In free climb: F6 (or L3+R3) route editor, F8 (or R3 in the editor) freecam, F7 teleport to route start, F9 show/hide route.");
         LoggerInstance.Msg("These are the defaults; change them in Settings > Controls > Remap controls, under Context: Freecam and Context: Route Editor.");
@@ -79,6 +81,7 @@ public sealed class RouteMakerMod : MelonMod
     public override void OnLateUpdate()
     {
         _editor?.LateUpdate();
+        _overlay?.LateUpdate();
         LevelSelectView.EndFrame();
     }
 
@@ -138,6 +141,16 @@ public sealed class RouteMakerMod : MelonMod
         }
 
         _lastZone = null;
+    }
+
+    /// <summary>The map's "Display route" button shows and hides the route line along with Ava's own path.</summary>
+    private void OnDisplayRouteToggled(bool shown)
+    {
+        if (shown != PaintColors.ShowLine)
+        {
+            PaintColors.SetShowLine(shown);
+            LoggerInstance.Msg($"Display route pressed: route line {(shown ? "shown" : "hidden")}.");
+        }
     }
 
     /// <summary>F10 logs game internals anywhere, menus and story included: it only writes to the log.</summary>
