@@ -41,6 +41,7 @@ internal sealed class EditorInput
     private bool _toggleCombo;
     private float _clearHeld;
     private bool _clearFired;
+    private float _newLineHeld = -1f;
 
     /// <summary>True once the gamepad was the last device touched; switches the brush to screen-centre aiming.</summary>
     public bool UsingGamepad { get; private set; }
@@ -76,6 +77,8 @@ internal sealed class EditorInput
     public bool DeletePoint { get; private set; }
     public bool ClearLine { get; private set; }
     public bool ToggleLine { get; private set; }
+    public bool CycleLineColor { get; private set; }
+    public bool NewLine { get; private set; }
 
     // Menu navigation (level select).
     public int MenuMove { get; private set; }
@@ -99,6 +102,7 @@ internal sealed class EditorInput
         _toggleCombo = false;
         _clearHeld = 0f;
         _clearFired = false;
+        _newLineHeld = -1f;
     }
 
     public void Read(float dt)
@@ -119,7 +123,7 @@ internal sealed class EditorInput
         CycleBrush = false;
         SelectBrush = null;
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
-        DeletePoint = ClearLine = ToggleLine = false;
+        DeletePoint = ClearLine = ToggleLine = CycleLineColor = NewLine = false;
         MenuMove = 0;
         MenuConfirm = MenuBack = MenuClick = false;
 
@@ -178,6 +182,8 @@ internal sealed class EditorInput
             DeletePoint |= !ctrl && ModControls.DeletePoint.KeyPressed;
             ClearLine |= ctrl && ModControls.DeletePoint.KeyPressed;
             ToggleLine |= ModControls.ShowLine.KeyPressed;
+            CycleLineColor |= !ctrl && ModControls.LineColor.KeyPressed;
+            NewLine |= !ctrl && ModControls.NewLine.KeyPressed;
 
             if (keyboard.upArrowKey.wasPressedThisFrame || ModControls.MoveForward.KeyPressed) MenuMove -= 1;
             if (keyboard.downArrowKey.wasPressedThisFrame || ModControls.MoveBack.KeyPressed) MenuMove += 1;
@@ -264,6 +270,7 @@ internal sealed class EditorInput
     /// <summary>The delete-point button deletes a point; held on, it clears the whole line once.</summary>
     private void ReadLinePad(float dt)
     {
+        ReadLineColorPad(dt);
         DeletePoint |= ModControls.DeletePoint.PadPressed;
         if (!ModControls.DeletePoint.PadHeld)
         {
@@ -277,6 +284,35 @@ internal sealed class EditorInput
         {
             ClearLine = true;
             _clearFired = true;
+        }
+    }
+
+    /// <summary>Tapped, the colour button changes the line's colour on release; held for a second, it starts a new line instead.</summary>
+    private void ReadLineColorPad(float dt)
+    {
+        if (ModControls.LineColor.PadPressed)
+        {
+            _newLineHeld = 0f;
+        }
+
+        if (_newLineHeld < 0f)
+        {
+            return;
+        }
+
+        if (ModControls.LineColor.PadHeld)
+        {
+            _newLineHeld += dt;
+            if (_newLineHeld >= ClearHoldSeconds)
+            {
+                NewLine = true;
+                _newLineHeld = -1f;
+            }
+        }
+        else
+        {
+            CycleLineColor = true;
+            _newLineHeld = -1f;
         }
     }
 

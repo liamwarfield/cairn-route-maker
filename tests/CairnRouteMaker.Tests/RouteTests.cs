@@ -91,27 +91,53 @@ public class RouteTests
     }
 
     [Fact]
-    public void RoundTripsTheRouteLine()
+    public void RoundTripsRouteLinesAndTheirGrades()
     {
         var route = new Route { ZoneKey = "Kami/A" };
-        route.Line.Add(new LinePoint(new Vector3(1, 2, 3), Vector3.UnitZ));
-        route.Line.Add(new LinePoint(new Vector3(1, 7, 3.5f), -Vector3.UnitX));
+        var main = new ClimbLine { Grade = LineGrade.Blue };
+        main.Points.Add(new LinePoint(new Vector3(1, 2, 3), Vector3.UnitZ));
+        main.Points.Add(new LinePoint(new Vector3(1, 7, 3.5f), -Vector3.UnitX));
+        var variant = new ClimbLine { Grade = LineGrade.Black };
+        variant.Points.Add(new LinePoint(new Vector3(2, 2, 3), Vector3.UnitZ));
+        variant.Points.Add(new LinePoint(new Vector3(3, 8, 3), Vector3.UnitZ));
+        route.Lines.Add(main);
+        route.Lines.Add(variant);
 
         var json = RouteFile.Serialize(route);
         var copy = RouteFile.Deserialize(json);
 
-        Assert.Contains("\"formatVersion\": 4", json);
-        Assert.Equal(route.Line, copy.Line);
+        Assert.Contains("\"formatVersion\": 5", json);
+        Assert.Contains("\"grade\": \"black\"", json);
+        Assert.Equal(2, copy.Lines.Count);
+        Assert.Equal(LineGrade.Blue, copy.Lines[0].Grade);
+        Assert.Equal(main.Points, copy.Lines[0].Points);
+        Assert.Equal(LineGrade.Black, copy.Lines[1].Grade);
+        Assert.Equal(variant.Points, copy.Lines[1].Points);
         Assert.False(copy.IsEmpty);
     }
 
     [Fact]
-    public void LeavesTheLineOutWhenThereIsNone()
+    public void LeavesLinesOutWhenTheyHaveNoPoints()
     {
-        var json = RouteFile.Serialize(new Route { ZoneKey = "Kami/A" });
+        var route = new Route { ZoneKey = "Kami/A" };
+        route.Lines.Add(new ClimbLine());
 
-        Assert.DoesNotContain("\"line\"", json);
-        Assert.Empty(RouteFile.Deserialize(json).Line);
+        var json = RouteFile.Serialize(route);
+
+        Assert.DoesNotContain("\"lines\"", json);
+        Assert.Empty(RouteFile.Deserialize(json).Lines);
+        Assert.True(route.IsEmpty);
+    }
+
+    [Fact]
+    public void ReadsAVersionFourLineAsOneGreenLine()
+    {
+        var route = RouteFile.Deserialize(
+            "{\"formatVersion\": 4, \"zoneKey\": \"Kami/A\", \"line\": [{\"p\": [1,2,3], \"n\": [0,0,1]}, {\"p\": [1,7,3], \"n\": [0,0,1]}]}");
+
+        var line = Assert.Single(route.Lines);
+        Assert.Equal(LineGrade.Green, line.Grade);
+        Assert.Equal(new Vector3(1, 7, 3), line.Points[1].Position);
     }
 
     [Fact]
@@ -120,7 +146,7 @@ public class RouteTests
         var route = RouteFile.Deserialize(
             "{\"formatVersion\": 3, \"zoneKey\": \"Kami/A\", \"finish\": {\"position\": [0,5,0], \"radius\": 1}, \"strokes\": []}");
 
-        Assert.Empty(route.Line);
+        Assert.Empty(route.Lines);
         Assert.Equal(1f, route.Finish.Radius);
     }
 

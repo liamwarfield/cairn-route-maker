@@ -11,7 +11,7 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// Draws a route in the world: the painted strokes (as decals, see <see cref="DecalPaint"/>),
-/// the route line (see <see cref="RouteLine"/>), the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
+/// the route lines (see <see cref="RouteLine"/>), the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
 /// nor Ava's grab checks can hit it.
 /// </summary>
 internal sealed class RouteOverlay
@@ -30,7 +30,10 @@ internal sealed class RouteOverlay
 
     private readonly GameObject _root;
     private readonly DecalPaint _paint;
-    private readonly RouteLine _line;
+    /// <summary>One renderer per route line; spares beyond the route's lines are hidden and reused.</summary>
+    private readonly List<RouteLine> _lines = new();
+    private int _lineCount;
+    private int _activeLine = -1;
     private bool _editingLine;
     private int _strokeCount;
     private readonly GameObject _start;
@@ -51,7 +54,6 @@ internal sealed class RouteOverlay
         {
             DrawingFinished = summary => MelonLogger.Msg($"Drew route paint: {summary}"),
         };
-        _line = new RouteLine(_root.transform);
         ApplyPaintColors();
         PaintColors.Changed += ApplyPaintColors;
 
@@ -85,7 +87,7 @@ internal sealed class RouteOverlay
         _strokeCount = 0;
         SetStart(route?.Start);
         SetFinish(route?.Finish);
-        SetLine(route == null ? System.Array.Empty<LinePoint>() : route.Line);
+        SetLines(route == null ? System.Array.Empty<ClimbLine>() : route.Lines);
         if (route == null)
         {
             return;
@@ -110,44 +112,103 @@ internal sealed class RouteOverlay
         _paint.Animate(Time.unscaledTime);
     }
 
-    /// <summary>Lay the route line out for the camera; call after the camera has moved for the frame.</summary>
+    /// <summary>Lay the route lines out for the camera; call after the camera has moved for the frame.</summary>
     public void LateUpdate()
     {
-        try
+        var camera = Camera.main;
+        for (var i = 0; i < _lineCount; i++)
         {
-            _line.Update(Camera.main);
-        }
-        catch (Exception e)
-        {
-            // Every frame would log the same thing: hide the line until the next change instead.
-            MelonLogger.Error($"Drawing the route line failed: {e}");
-            _line.Visible = false;
+            try
+            {
+                _lines[i].Update(camera);
+            }
+            catch (Exception e)
+            {
+                // Every frame would log the same thing: hide the line until the next change instead.
+                MelonLogger.Error($"Drawing route line {i + 1} failed: {e}");
+                _lines[i].Visible = false;
+            }
         }
     }
 
-    /// <summary>The route line, for the editor's selection and hover highlights.</summary>
-    public RouteLine Line => _line;
+    public int LineCount => _lineCount;
 
-    public void SetLine(IReadOnlyList<LinePoint> points) => _line.SetPoints(points);
+    /// <summary>A route line's renderer, for the editor's picking and its selection and hover highlights.</summary>
+    public RouteLine LineAt(int index) => _lines[index];
 
-    /// <summary>While the line tool is in use the line shows, with every control point, even if it's switched off.</summary>
+    /// <summary>Show these lines, reusing renderers (and their unchanged pieces) where they're already drawn.</summary>
+    public void SetLines(IReadOnlyList<ClimbLine> lines)
+    {
+        while (_lines.Count < lines.Count)
+        {
+            _lines.Add(new RouteLine(_root.transform));
+        }
+
+        _lineCount = lines.Count;
+        for (var i = 0; i < _lines.Count; i++)
+        {
+            if (i < lines.Count)
+            {
+                SetLine(i, lines[i]);
+            }
+            else
+            {
+                _lines[i].SetPoints(System.Array.Empty<LinePoint>());
+            }
+        }
+
+        if (_activeLine >= _lineCount)
+        {
+            _activeLine = -1;
+        }
+
+        ApplyLineVisibility();
+    }
+
+    /// <summary>Redraw one line after its points or colour changed.</summary>
+    public void SetLine(int index, ClimbLine line)
+    {
+        _lines[index].SetColor(line.Grade);
+        _lines[index].SetPoints(line.Points);
+    }
+
+    /// <summary>The line being edited: only it shows every control point. -1 for none.</summary>
+    public int ActiveLine
+    {
+        get => _activeLine;
+        set
+        {
+            _activeLine = value;
+            ApplyLineVisibility();
+        }
+    }
+
+    /// <summary>While the line tool is in use the lines show, even if they're switched off.</summary>
     public bool EditingLine
     {
         get => _editingLine;
         set
         {
-            if (_editingLine == value)
+            if (_editingLine != value)
             {
-                return;
+                _editingLine = value;
+                ApplyLineVisibility();
             }
+        }
+    }
 
-            _editingLine = value;
-            _line.ShowControlPoints = value;
-            _line.Visible = value || PaintColors.ShowLine;
-            if (!value)
+    private void ApplyLineVisibility()
+    {
+        for (var i = 0; i < _lines.Count; i++)
+        {
+            var line = _lines[i];
+            var active = _editingLine && i == _activeLine;
+            line.Visible = i < _lineCount && (_editingLine || PaintColors.ShowLine);
+            line.ShowControlPoints = active;
+            if (!active)
             {
-                _line.Selected = -1;
-                _line.Hovered = -1;
+                line.Selected = -1;
+                line.Hovered = -1;
             }
         }
     }
@@ -262,8 +323,7 @@ internal sealed class RouteOverlay
         _paint.GlowPulse = PaintColors.GlowPulse;
         _brushMaterials[(int)StrokeMode.Allow].color = WithAlpha(PaintColors.Allow, BrushAllowAlpha);
         _brushMaterials[(int)StrokeMode.Deny].color = WithAlpha(PaintColors.Deny, BrushDenyAlpha);
-        _line.SetColor(PaintColors.Line);
-        _line.Visible = _editingLine || PaintColors.ShowLine;
+        ApplyLineVisibility();
     }
 
     private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);

@@ -38,7 +38,7 @@ internal static class EditorHud
             $"Scroll or {Keys(ModControls.BrushSmaller, ModControls.BrushBigger)} brush size\n" +
             $"{ModControls.CycleBrush.KeyName} or {tools} allow/deny/erase/line   " +
             $"{ModControls.SetStart.KeyName} set start (facing = camera)\n" +
-            $"{ModControls.SetFinish.KeyName} set finish (brush size, at least 1 m)   {ModControls.ShowLine.KeyName} show/hide line\n" +
+            $"{ModControls.SetFinish.KeyName} set finish (brush size, at least 1 m)   {ModControls.ShowLine.KeyName} show/hide lines\n" +
             $"Ctrl+{ModControls.Undo.KeyName} undo   Ctrl+{ModControls.Save.KeyName} save   {ModControls.PlayTest.KeyName} play-test   " +
             $"{ModControls.LevelSelect.KeyName} level select   {ModControls.Exit.KeyName} exit\n" +
             $"{ModControls.ToggleFreecam.KeyName} freecam";
@@ -52,16 +52,18 @@ internal static class EditorHud
 
         _lineKeyboardHelp = move +
             $"Hold {ModControls.Look.KeyName} look   {ModControls.Paint.KeyName} add point, or drag a point or the line\n" +
-            $"{ModControls.DeletePoint.KeyName} delete point   Ctrl+{ModControls.DeletePoint.KeyName} clear line\n" +
+            $"{ModControls.NewLine.KeyName} new line   {ModControls.LineColor.KeyName} line colour   " +
+            $"{ModControls.DeletePoint.KeyName} delete point   Ctrl+{ModControls.DeletePoint.KeyName} delete line\n" +
             $"{ModControls.CycleBrush.KeyName} or {tools} tool   {ModControls.SetStart.KeyName} set start   " +
-            $"{ModControls.SetFinish.KeyName} set finish   {ModControls.ShowLine.KeyName} show/hide line\n" +
+            $"{ModControls.SetFinish.KeyName} set finish   {ModControls.ShowLine.KeyName} show/hide lines\n" +
             $"Ctrl+{ModControls.Undo.KeyName} undo   Ctrl+{ModControls.Save.KeyName} save   {ModControls.PlayTest.KeyName} play-test   " +
             $"{ModControls.LevelSelect.KeyName} level select   {ModControls.Exit.KeyName} exit\n" +
             $"{ModControls.ToggleFreecam.KeyName} freecam";
 
         _lineGamepadHelp = padMove +
             $"{ModControls.Paint.PadName} add point, or drag a point or the line   {ModControls.CycleBrush.PadName} tool\n" +
-            $"{ModControls.DeletePoint.PadName} delete point (hold: clear line)   {ModControls.Undo.PadName} undo\n" +
+            $"{ModControls.LineColor.PadName} line colour (hold: new line)   {ModControls.DeletePoint.PadName} delete point (hold: delete line)\n" +
+            $"{ModControls.Undo.PadName} undo   " +
             $"{ModControls.SetStart.PadName} set start   {ModControls.SetFinish.PadName} set finish   " +
             $"{ModControls.Save.PadName} save   {ModControls.PlayTest.PadName} play-test\n" +
             $"{ModControls.LevelSelect.PadName} level select   {ModControls.Exit.PadName} or L3+R3 exit   {ModControls.ToggleFreecam.PadName} freecam";
@@ -118,7 +120,7 @@ internal static class EditorHud
 
         var mode = editor.Mode switch { StrokeMode.Allow => "ALLOW", StrokeMode.Deny => "DENY", _ => "ERASE" };
         var tool = editor.LineTool
-            ? $"Tool: LINE  {LineSummary(route.Line.Count, editor.SelectedPoint)}"
+            ? $"Tool: LINE  {LineSummary(route, editor.ActiveLine, editor.SelectedPoint)}"
             : $"Brush: {mode}  radius {editor.Radius:0.00} m";
         var help = editor.LineTool
             ? editor.Input.UsingGamepad ? _lineGamepadHelp : _lineKeyboardHelp
@@ -127,22 +129,30 @@ internal static class EditorHud
             $"ROUTE EDITOR - {RouteName(route)}\n" +
             tool +
             $"{(editor.HasBrushTarget ? "" : "  (no rock under brush)")}\n" +
-            $"Strokes: {route.Strokes.Count}  stamps: {stamps}  line: {route.Line.Count}  start: {(route.Start == null ? "not set" : "set")}" +
+            $"Strokes: {route.Strokes.Count}  stamps: {stamps}  lines: {route.Lines.Count}  start: {(route.Start == null ? "not set" : "set")}" +
             $"  finish: {(route.Finish == null ? "not set" : "set")}\n\n" +
             help;
         GUI.Box(new Rect(Screen.width - 490, 20, 470, 184), text);
         DrawReticle(editor);
     }
 
-    private static string LineSummary(int points, int selected)
+    private static string LineSummary(Route route, int active, int selected)
     {
+        if (active < 0 || active >= route.Lines.Count)
+        {
+            return "no lines yet";
+        }
+
+        var line = route.Lines[active];
+        var name = $"line {active + 1} of {route.Lines.Count} ({LineColors.NameOf(line.Grade).ToLowerInvariant()})";
+        var points = line.Points.Count;
         if (points == 0)
         {
-            return "no points yet";
+            return $"{name}, no points yet";
         }
 
         var which = selected >= 0 && selected < points ? selected + 1 : points;
-        return $"{points} point{(points == 1 ? "" : "s")}, point {which} selected";
+        return $"{name}, {points} point{(points == 1 ? "" : "s")}, point {which} selected";
     }
 
     private static void DrawFreecamPanel(RouteEditor editor)

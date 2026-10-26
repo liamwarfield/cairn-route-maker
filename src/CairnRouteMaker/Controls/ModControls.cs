@@ -128,7 +128,12 @@ internal static class ModControls
     // D-pad down with Smaller brush on purpose; left out of the clash checks for that reason.
     // With Ctrl on the keyboard, or held for a second on a gamepad, it clears the whole line.
     public static readonly Control DeletePoint = new("DeletePoint", ControlSection.RouteEditor, ControlModes.None,
-        "Delete line point (with Ctrl: clear line)", "<Keyboard>/backspace", "<Gamepad>/dpad/down", "Delete line point (hold: clear line)");
+        "Delete line point (with Ctrl: delete line)", "<Keyboard>/backspace", "<Gamepad>/dpad/down", "Delete line point (hold: delete line)");
+
+    // Shares D-pad up with Bigger brush the same way. Tapped on a gamepad it changes the colour, held it starts a new line.
+    public static readonly Control LineColor = new("LineColor", ControlSection.RouteEditor, ControlModes.None,
+        "Next line colour", "<Keyboard>/c", "<Gamepad>/dpad/up", "Next line colour (hold: new line)");
+    public static readonly Control NewLine = new("NewLine", ControlSection.RouteEditor, ControlModes.RouteEditor, "New route line", "<Keyboard>/n", null);
 
     // Ctrl+key on the keyboard. The remap screen only rebinds the key, so these are left out of its
     // clash checks: S would always clash with Move back.
@@ -141,7 +146,7 @@ internal static class ModControls
         MoveForward, MoveBack, MoveLeft, MoveRight, MoveDown, MoveUp, Fast, Medium, Look,
         Teleport, PlayTest, LevelSelect, Exit, ToggleFreecam,
         OpenEditor, GoToStart, ShowRoute, Paint, CycleBrush, AllowBrush, DenyBrush, EraseBrush,
-        LineTool, BrushBigger, BrushSmaller, SetStart, SetFinish, ShowLine, DeletePoint, Undo, Save,
+        LineTool, BrushBigger, BrushSmaller, SetStart, SetFinish, ShowLine, DeletePoint, LineColor, NewLine, Undo, Save,
     };
 
     private static string _savePath;

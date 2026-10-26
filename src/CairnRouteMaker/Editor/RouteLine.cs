@@ -70,7 +70,6 @@ internal sealed class RouteLine
 
     private const float SnapRetrySeconds = 2f;
 
-    private static readonly Color32 Border = new(16, 16, 20, 230);
     private static readonly Color32 Ring = new(250, 250, 250, 255);
 
     /// <summary>One piece between two control points, remembered so moving a point only redoes its neighbours.</summary>
@@ -112,7 +111,8 @@ internal sealed class RouteLine
     private NVector3[] _scratch = Array.Empty<NVector3>();
     private Il2CppStructArray<Vector3> _vertices;
     private NVector3[] _built = Array.Empty<NVector3>();
-    private Color32 _color = new(70, 210, 90, 255);
+    private Color32 _color = LineColors.Of(LineGrade.Green);
+    private Color32 _border = LineColors.BorderOf(LineGrade.Green);
     private bool _showPoints;
     private int _selected = -1;
     private int _hovered = -1;
@@ -184,9 +184,10 @@ internal sealed class RouteLine
         }
     }
 
-    public void SetColor(Color32 color)
+    public void SetColor(LineGrade grade)
     {
-        _color = color;
+        _color = LineColors.Of(grade);
+        _border = LineColors.BorderOf(grade);
         _topologyDirty = true;
     }
 
@@ -518,7 +519,7 @@ internal sealed class RouteLine
         var t = 0;
         var v = 0;
         var line = new Color32(_color.r, _color.g, _color.b, 255);
-        foreach (var color in new[] { Border, line })
+        foreach (var color in new[] { _border, line })
         {
             if (ribbon == 0)
             {
@@ -547,7 +548,7 @@ internal sealed class RouteLine
 
         for (var d = 0; d < _dots.Count; d++)
         {
-            foreach (var color in new[] { Border, Ring, line })
+            foreach (var color in new[] { _border, Ring, line })
             {
                 for (var i = 0; i < discVertices; i++)
                 {
