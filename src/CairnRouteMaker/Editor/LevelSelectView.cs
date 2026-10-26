@@ -30,7 +30,7 @@ internal static class LevelSelectView
     /// <summary>Colour swatch side and the gap after each, as fractions of the font size.</summary>
     private const float SwatchSize = 0.55f;
     private const float SwatchGap = 0.25f;
-    private const int MaxSwatches = 2;
+    private const int MaxSwatches = 3;
 
     /// <summary>The list fades out over this much at its top and bottom edges.</summary>
     private const float Fade = 44f;

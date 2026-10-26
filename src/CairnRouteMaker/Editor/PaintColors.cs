@@ -17,11 +17,13 @@ internal enum PaintStyle
 /// <summary>
 /// How route paint looks: the colours of allow and deny paint, which the brush preview and the
 /// next-grab indicator follow too, whether it's drawn as a fill, a glow along its edges or both,
-/// and whether the glow pulses. Set on the menu's Paint Colours page and saved in
+/// and whether the glow pulses; also the route line's colour and whether it shows. Set on the menu's
+/// Paint Colours page and saved in
 /// UserData/MelonPreferences.cfg, the colours as #RRGGBB, so any other colour can be typed in
 /// while the game is closed. The default yellow and red are hard to tell
 /// apart with red-green colour blindness; the blue and orange preset stays distinct under
-/// simulated protanopia, deuteranopia and tritanopia.
+/// simulated protanopia, deuteranopia and tritanopia, and pairs with a white line, which stands
+/// apart from both by brightness rather than hue.
 /// </summary>
 internal static class PaintColors
 {
@@ -39,36 +41,40 @@ internal static class PaintColors
 
     public sealed class Preset
     {
-        public Preset(string name, string note, Choice allow, Choice deny)
+        public Preset(string name, string note, Choice allow, Choice deny, Choice line)
         {
             Name = name;
             Note = note;
             Allow = allow.Color;
             Deny = deny.Color;
+            Line = line.Color;
         }
 
         public string Name { get; }
         public string Note { get; }
         public Color32 Allow { get; }
         public Color32 Deny { get; }
+        public Color32 Line { get; }
     }
 
     private static readonly Choice Yellow = new("Yellow", 0xFFCD28);
     private static readonly Choice Red = new("Red", 0xF02D1E);
     private static readonly Choice Blue = new("Blue", 0x3C9BFF);
     private static readonly Choice Orange = new("Orange", 0xFF8C1A);
+    private static readonly Choice Green = new("Green", 0x46D25A);
+    private static readonly Choice White = new("White", 0xF0F0F0);
 
     /// <summary>Bright enough to show on dark rock. No black: that's the erase brush.</summary>
     public static readonly Choice[] Palette =
     {
-        Yellow, Orange, Red, new("Magenta", 0xE633C8), new("Purple", 0x9B5CFF), Blue, new("Cyan", 0x1EDCE6), new("Green", 0x46D25A), new("White", 0xF0F0F0),
+        Yellow, Orange, Red, new("Magenta", 0xE633C8), new("Purple", 0x9B5CFF), Blue, new("Cyan", 0x1EDCE6), Green, White,
     };
 
     /// <summary>The first is the default.</summary>
     public static readonly Preset[] Presets =
     {
-        new("Yellow and red", "default", Yellow, Red),
-        new("Blue and orange", "colour-blind friendly", Blue, Orange),
+        new("Yellow and red", "default", Yellow, Red, Green),
+        new("Blue and orange", "colour-blind friendly", Blue, Orange, White),
     };
 
     private static MelonPreferences_Category _category;
@@ -76,11 +82,15 @@ internal static class PaintColors
     private static MelonPreferences_Entry<string> _denyEntry;
     private static MelonPreferences_Entry<string> _styleEntry;
     private static MelonPreferences_Entry<bool> _pulseEntry;
+    private static MelonPreferences_Entry<string> _lineEntry;
+    private static MelonPreferences_Entry<bool> _showLineEntry;
 
     public static Color32 Allow { get; private set; } = Yellow.Color;
     public static Color32 Deny { get; private set; } = Red.Color;
     public static PaintStyle Style { get; private set; } = PaintStyle.FillAndGlow;
     public static bool GlowPulse { get; private set; } = true;
+    public static Color32 Line { get; private set; } = Green.Color;
+    public static bool ShowLine { get; private set; } = true;
 
     public static bool ShowsFill => Style != PaintStyle.GlowOnly;
     public static bool ShowsGlow => Style != PaintStyle.FillOnly;
@@ -95,10 +105,14 @@ internal static class PaintColors
         _denyEntry = _category.CreateEntry("DenyPaintColor", ToHex(Red.Color), "Deny paint colour", "Route paint for holds that are off-route, as #RRGGBB.");
         _styleEntry = _category.CreateEntry("PaintStyle", PaintStyle.FillAndGlow.ToString(), "Paint style", "FillAndGlow, GlowOnly or FillOnly.");
         _pulseEntry = _category.CreateEntry("PaintGlowPulse", true, "Paint glow pulse", "Slowly pulse the glow along the edges of route paint.");
+        _lineEntry = _category.CreateEntry("RouteLineColor", ToHex(Green.Color), "Route line colour", "The line drawn along a route, as #RRGGBB.");
+        _showLineEntry = _category.CreateEntry("ShowRouteLine", true, "Show route line", "Draw the route line over the rock.");
         Allow = Read(_allowEntry, Yellow.Color);
         Deny = Read(_denyEntry, Red.Color);
         Style = ReadStyle(_styleEntry);
         GlowPulse = _pulseEntry.Value;
+        Line = Read(_lineEntry, Green.Color);
+        ShowLine = _showLineEntry.Value;
     }
 
     public static Color32 Of(StrokeMode mode) => mode == StrokeMode.Allow ? Allow : Deny;
@@ -124,6 +138,42 @@ internal static class PaintColors
         {
             _allowEntry.Value = ToHex(allow);
             _denyEntry.Value = ToHex(deny);
+            _category.SaveToFile(false);
+        }
+
+        Changed?.Invoke();
+    }
+
+    public static void ApplyPreset(Preset preset)
+    {
+        Line = preset.Line;
+        if (_category != null)
+        {
+            _lineEntry.Value = ToHex(preset.Line);
+        }
+
+        SetBoth(preset.Allow, preset.Deny);
+    }
+
+    /// <summary>The line may share a colour with either paint: its dark border keeps it apart.</summary>
+    public static void SetLine(Color32 color)
+    {
+        Line = color;
+        if (_category != null)
+        {
+            _lineEntry.Value = ToHex(color);
+            _category.SaveToFile(false);
+        }
+
+        Changed?.Invoke();
+    }
+
+    public static void SetShowLine(bool on)
+    {
+        ShowLine = on;
+        if (_category != null)
+        {
+            _showLineEntry.Value = on;
             _category.SaveToFile(false);
         }
 

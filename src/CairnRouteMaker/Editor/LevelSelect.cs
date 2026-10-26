@@ -328,7 +328,7 @@ internal sealed class LevelSelect
     {
         Add(new Entry("Settings", true, false, null));
         Add(new Entry("Paint colours", false, true, () => Push(page, ShowPaintColors),
-            swatches: new[] { PaintColors.Allow, PaintColors.Deny }));
+            swatches: new[] { PaintColors.Allow, PaintColors.Deny, PaintColors.Line }));
     }
 
     private void ShowPaintColors()
@@ -349,12 +349,16 @@ internal sealed class LevelSelect
             })), note: PaintColors.NameOf(PaintColors.Style)));
         Add(new Entry("Glow pulse", false, true, () => ChangePaint(() => PaintColors.SetGlowPulse(!PaintColors.GlowPulse)),
             note: PaintColors.GlowPulse ? "on" : "off"));
+        Add(new Entry("Route line", false, true, () => Push(ShowPaintColors, ShowLineChoices),
+            note: PaintColors.NameOf(PaintColors.Line), swatches: new[] { PaintColors.Line }));
+        Add(new Entry("Show route line", false, true, () => ChangePaint(() => PaintColors.SetShowLine(!PaintColors.ShowLine)),
+            note: PaintColors.ShowLine ? "on" : "off"));
 
         Add(new Entry("Presets", true, false, null));
         foreach (var preset in PaintColors.Presets)
         {
-            Add(new Entry(preset.Name, false, true, () => ChangePaint(() => PaintColors.SetBoth(preset.Allow, preset.Deny)),
-                note: preset.Note, swatches: new[] { preset.Allow, preset.Deny }));
+            Add(new Entry(preset.Name, false, true, () => ChangePaint(() => PaintColors.ApplyPreset(preset)),
+                note: preset.Note, swatches: new[] { preset.Allow, preset.Deny, preset.Line }));
         }
 
         End();
@@ -404,11 +408,40 @@ internal sealed class LevelSelect
         }
     }
 
+    private void ShowLineChoices()
+    {
+        Begin("Route Line", "Settings · Paint Colours", "The line drawn along a route. Its dark border keeps it clear of paint in the same colour.");
+        var currentIndex = -1;
+        foreach (var choice in PaintColors.Palette)
+        {
+            var color = choice.Color;
+            string note = null;
+            if (PaintColors.Same(color, PaintColors.Line))
+            {
+                note = "current";
+                currentIndex = _entries.Count;
+            }
+
+            Add(new Entry(choice.Name, false, true, () =>
+            {
+                PaintColors.SetLine(color);
+                Back();
+            }, note: note, swatches: new[] { color }));
+        }
+
+        End();
+        if (currentIndex >= 0)
+        {
+            Select(currentIndex);
+        }
+    }
+
     private static string Summary(Route route)
     {
         var strokes = route.Strokes.Count;
         return $"{strokes} stroke{(strokes == 1 ? "" : "s")} · {(route.Start == null ? "no start" : "start set")}"
-            + $" · {(route.Finish == null ? "no finish" : "finish set")}";
+            + $" · {(route.Finish == null ? "no finish" : "finish set")}"
+            + (route.Line.Count >= 2 ? $" · line of {route.Line.Count} points" : "");
     }
 
     /// <summary>Go to a page, remembering how to come back to the current one.</summary>

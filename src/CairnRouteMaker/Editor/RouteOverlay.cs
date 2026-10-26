@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using MelonLoader;
@@ -9,7 +11,7 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// Draws a route in the world: the painted strokes (as decals, see <see cref="DecalPaint"/>),
-/// the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
+/// the route line (see <see cref="RouteLine"/>), the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
 /// nor Ava's grab checks can hit it.
 /// </summary>
 internal sealed class RouteOverlay
@@ -28,6 +30,8 @@ internal sealed class RouteOverlay
 
     private readonly GameObject _root;
     private readonly DecalPaint _paint;
+    private readonly RouteLine _line;
+    private bool _editingLine;
     private int _strokeCount;
     private readonly GameObject _start;
     private readonly GameObject _finish;
@@ -47,6 +51,7 @@ internal sealed class RouteOverlay
         {
             DrawingFinished = summary => MelonLogger.Msg($"Drew route paint: {summary}"),
         };
+        _line = new RouteLine(_root.transform);
         ApplyPaintColors();
         PaintColors.Changed += ApplyPaintColors;
 
@@ -88,6 +93,7 @@ internal sealed class RouteOverlay
         }
 
         _paint.ReportWhenDrawn();
+        SetLine(route.Line);
         SetStart(route.Start);
         SetFinish(route.Finish);
     }
@@ -97,6 +103,48 @@ internal sealed class RouteOverlay
     {
         _paint.Flush();
         _paint.Animate(Time.unscaledTime);
+    }
+
+    /// <summary>Lay the route line out for the camera; call after the camera has moved for the frame.</summary>
+    public void LateUpdate()
+    {
+        try
+        {
+            _line.Update(Camera.main);
+        }
+        catch (Exception e)
+        {
+            // Every frame would log the same thing: hide the line until the next change instead.
+            MelonLogger.Error($"Drawing the route line failed: {e}");
+            _line.Visible = false;
+        }
+    }
+
+    /// <summary>The route line, for the editor's selection and hover highlights.</summary>
+    public RouteLine Line => _line;
+
+    public void SetLine(IReadOnlyList<LinePoint> points) => _line.SetPoints(points);
+
+    /// <summary>While the line tool is in use the line shows, with every control point, even if it's switched off.</summary>
+    public bool EditingLine
+    {
+        get => _editingLine;
+        set
+        {
+            if (_editingLine == value)
+            {
+                return;
+            }
+
+            _editingLine = value;
+            _line.ShowControlPoints = value;
+            _line.Visible = value || PaintColors.ShowLine;
+            if (!value)
+            {
+                _line.Selected = -1;
+                _line.Hovered = -1;
+            }
+        }
     }
 
     public void BeginStroke() => _strokeCount++;
@@ -209,6 +257,8 @@ internal sealed class RouteOverlay
         _paint.GlowPulse = PaintColors.GlowPulse;
         _brushMaterials[(int)StrokeMode.Allow].color = WithAlpha(PaintColors.Allow, BrushAllowAlpha);
         _brushMaterials[(int)StrokeMode.Deny].color = WithAlpha(PaintColors.Deny, BrushDenyAlpha);
+        _line.SetColor(PaintColors.Line);
+        _line.Visible = _editingLine || PaintColors.ShowLine;
     }
 
     private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);
@@ -218,7 +268,7 @@ internal sealed class RouteOverlay
     private static Material CreateMaterial(Color color) =>
         RuntimeAssets.Keep(new Material(FindShader()) { color = color, renderQueue = 3000 });
 
-    private static Shader FindShader()
+    internal static Shader FindShader()
     {
         if (_shader != null)
         {

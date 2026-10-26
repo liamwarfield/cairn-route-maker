@@ -121,6 +121,8 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
   - `Helpers.DrawGLLine` / `DrawGLQuad` with `Helpers.GLLineMaterial`.
   - `TGBDecal` / `TGBDecalsManager`.
   - `ColliderHighlighter`, `ClimbPathRenderer`.
+  - The map's routes look like node lists (`nodes`, `MAX_NODES_PER_ROUTE`) drawn with pixel-width outlines (`outlinePixelWidth`, `outline2PixelWidth`, `lineWidthMulitplier`) through a command buffer (`AddPathRenderersToCommandBuffer`). **sig**; whether the nodes are spline control points or a dense polyline is a **guess**.
+  - The route line (`RouteLine`) asks for `Hidden/Internal-Colored` first: it multiplies in vertex colours and takes `_ZTest`, `_ZWrite`, `_Cull`, `_SrcBlend` and `_DstBlend` as properties. Whether the game's build includes it is a **guess** until the log's "Route line shader" line says so.
   - CairnMP draws trails with `LineRenderer` and the first shader it finds among `Sprites/Default`, `Universal Render Pipeline/Unlit` and `Unlit/Color`.
 - `StreamingAssets/GHOSTS` holds recordings of climbing ghosts (tutorial holograms, rivals, community runs), played by `GhostsManager`. It contains no route data.
 
