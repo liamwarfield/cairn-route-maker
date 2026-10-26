@@ -51,6 +51,9 @@ public sealed class FinishZone
     }
 }
 
+/// <summary>A control point of the route line: a spot on the rock and the rock's outward normal there.</summary>
+public readonly record struct LinePoint(Vector3 Position, Vector3 Normal);
+
 /// <summary>
 /// A climbing route: an ordered list of allow/deny strokes plus where Ava starts and finishes.
 /// Anything not covered by a stroke is off-route, and later strokes override earlier ones,
@@ -68,7 +71,13 @@ public sealed class Route
     public FinishZone Finish { get; set; }
     public List<Stroke> Strokes { get; } = new();
 
-    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0;
+    /// <summary>
+    /// The route line's control points, bottom to top. A smooth curve is drawn through them
+    /// (see <see cref="RouteCurve"/>); it's only a guide and doesn't affect what counts as on-route.
+    /// </summary>
+    public List<LinePoint> Line { get; } = new();
+
+    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0 && Line.Count == 0;
 
     /// <summary>
     /// Whether a point counts as on-route: the last stroke containing it decides, and only an

@@ -13,8 +13,8 @@ namespace CairnRouteMaker.Routes;
 /// </summary>
 public static class RouteFile
 {
-    /// <summary>2 added erase strokes, 3 the finish; older files read unchanged.</summary>
-    public const int FormatVersion = 3;
+    /// <summary>2 added erase strokes, 3 the finish, 4 the route line; older files read unchanged.</summary>
+    public const int FormatVersion = 4;
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -52,6 +52,9 @@ public static class RouteFile
                         .ToArray(),
                 })
                 .ToArray(),
+            Line = route.Line.Count == 0
+                ? null
+                : route.Line.Select(point => new LinePointDto { P = ToArray(point.Position), N = ToArray(point.Normal) }).ToArray(),
         };
         return JsonSerializer.Serialize(dto, Options);
     }
@@ -93,6 +96,11 @@ public static class RouteFile
             route.Strokes.Add(stroke);
         }
 
+        foreach (var pointDto in dto.Line ?? Array.Empty<LinePointDto>())
+        {
+            route.Line.Add(new LinePoint(FromArray(pointDto.P), FromArray(pointDto.N)));
+        }
+
         return route;
     }
 
@@ -117,6 +125,7 @@ public static class RouteFile
         public StartDto Start { get; set; }
         public FinishDto Finish { get; set; }
         public StrokeDto[] Strokes { get; set; }
+        public LinePointDto[] Line { get; set; }
     }
 
     private sealed class StartDto
@@ -135,6 +144,12 @@ public static class RouteFile
     {
         public StrokeMode Mode { get; set; }
         public StampDto[] Stamps { get; set; }
+    }
+
+    private sealed class LinePointDto
+    {
+        public float[] P { get; set; }
+        public float[] N { get; set; }
     }
 
     private sealed class StampDto
