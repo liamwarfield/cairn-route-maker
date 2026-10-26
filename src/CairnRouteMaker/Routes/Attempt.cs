@@ -40,9 +40,6 @@ public sealed class Attempt
     /// <summary>A hand or foot was attached outside the allowed paint during this attempt.</summary>
     public bool OffRoute { get; private set; }
 
-    /// <summary>Where the first off-route attachment happened.</summary>
-    public Vector3 OffRoutePoint { get; private set; }
-
     /// <summary>Seconds on the clock: running while climbing, frozen once finished.</summary>
     public double Elapsed(double now) => State switch
     {
@@ -112,7 +109,6 @@ public sealed class Attempt
         }
 
         OffRoute = true;
-        OffRoutePoint = point;
         return true;
     }
 

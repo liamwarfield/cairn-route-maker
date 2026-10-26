@@ -10,8 +10,9 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// The in-game route editor: a free-flying camera, a brush that paints allow/deny/erase stamps
-/// on rock, start and finish markers, and a level select for jumping around to test. While open, the
-/// game's own input is blocked and devices are read directly (see <see cref="EditorInput"/>).
+/// on rock, a line tool that places the route line's control points, start and finish markers, and
+/// a level select for jumping around to test. While open, the game's own input is blocked and
+/// devices are read directly (see <see cref="EditorInput"/>).
 /// It has a second mode, freecam: the same camera with a marker instead of the brush, for looking
 /// around and moving Ava, which can't change the route.
 ///
@@ -38,17 +39,24 @@ internal sealed class RouteEditor
     /// <summary>How long Ava must be settled in a route's zone before its paint is drawn.</summary>
     private const float PaintSettleSeconds = 2f;
 
+    /// <summary>Radius of the line tool's aiming sphere.</summary>
+    private const float LineMarkerRadius = 0.12f;
+
+    /// <summary>A grabbed control point only follows the cursor once the aim has moved this far on the rock.</summary>
+    private const float DragThreshold = 0.03f;
+
     private enum UndoKind
     {
         Stroke,
         Start,
         Finish,
+        Line,
     }
 
     private readonly RouteStorage _storage;
     private readonly RouteOverlay _overlay;
     private readonly Traveler _traveler;
-    private readonly Stack<(UndoKind Kind, StartPosition PreviousStart, FinishZone PreviousFinish)> _undo = new();
+    private readonly Stack<(UndoKind Kind, StartPosition PreviousStart, FinishZone PreviousFinish, List<LinePoint> PreviousLine)> _undo = new();
 
     private Camera _camera;
     private float _yaw;
@@ -62,6 +70,13 @@ internal sealed class RouteEditor
     private bool _sawInput;
     private float _nextStreamUpdate;
     private int _openedFrame;
+
+    // Line tool: the point being dragged (or -1), where the drag started on the rock, and the line
+    // as it was before the drag, which becomes an undo step once the drag actually changes something.
+    private int _dragPoint = -1;
+    private Vector3 _dragStart;
+    private bool _dragFollowing;
+    private List<LinePoint> _lineBeforeDrag;
 
     public RouteEditor(RouteStorage storage, RouteOverlay overlay, Traveler traveler)
     {
@@ -81,6 +96,12 @@ internal sealed class RouteEditor
     /// <summary>The route on show, or null. Never null while editing.</summary>
     public Route Route { get; private set; }
     public StrokeMode Mode { get; private set; } = StrokeMode.Allow;
+
+    /// <summary>The fourth brush: places and moves the route line's control points instead of painting.</summary>
+    public bool LineTool { get; private set; }
+
+    /// <summary>The line point that delete removes and that's drawn largest, or -1 for the last one.</summary>
+    public int SelectedPoint { get; private set; } = -1;
     public float Radius { get; private set; } = 0.6f;
     public bool HasBrushTarget { get; private set; }
     public bool Looking { get; private set; }
@@ -132,6 +153,7 @@ internal sealed class RouteEditor
         }
 
         EndStroke();
+        EndDrag();
         if (IsBlankNewRoute)
         {
             _dirty = false;
@@ -144,6 +166,7 @@ internal sealed class RouteEditor
 
         LevelSelect.Close();
         _overlay.HideBrush();
+        _overlay.EditingLine = false;
         GameApi.StopStreamingAroundCamera();
         GameApi.ReleaseCamera();
         GameApi.BlockGameInput(false);
@@ -209,6 +232,7 @@ internal sealed class RouteEditor
         }
 
         EndStroke();
+        EndDrag();
         if (!Freecam)
         {
             Freecam = true;
@@ -314,7 +338,9 @@ internal sealed class RouteEditor
         if (Input.LevelSelect)
         {
             EndStroke();
+            EndDrag();
             _overlay.HideBrush();
+            _overlay.EditingLine = false;
             // So the menu lists the route as it is now.
             SaveChanges();
             LevelSelect.Open(this, _storage, _traveler, SetStatus);
@@ -326,21 +352,38 @@ internal sealed class RouteEditor
             ToggleFreecam();
         }
 
+        if (Input.ToggleLine)
+        {
+            PaintColors.SetShowLine(!PaintColors.ShowLine);
+            SetStatus(PaintColors.ShowLine ? "Route line shown." : "Route line hidden (it still shows while the line tool is in use).");
+        }
+
         if (Freecam)
         {
+            _overlay.EditingLine = false;
             UpdateFreecam();
             return;
         }
 
         if (Input.CycleBrush)
         {
-            Mode = Mode switch { StrokeMode.Allow => StrokeMode.Deny, StrokeMode.Deny => StrokeMode.Erase, _ => StrokeMode.Allow };
+            // Allow, deny, erase, then the line tool.
+            if (LineTool)
+            {
+                SelectTool(0);
+            }
+            else
+            {
+                SelectTool(Mode == StrokeMode.Erase ? 3 : (int)Mode + 1);
+            }
         }
 
         if (Input.SelectBrush is { } brush)
         {
-            Mode = (StrokeMode)brush;
+            SelectTool(brush);
         }
+
+        _overlay.EditingLine = LineTool;
 
         if (Input.Undo)
         {
@@ -355,15 +398,6 @@ internal sealed class RouteEditor
         Radius = Mathf.Clamp(Radius * Input.BrushScale, MinRadius, MaxRadius);
         UpdateCamera();
         var hit = Aim();
-        if (HasBrushTarget && !Looking)
-        {
-            _overlay.ShowBrush(hit.point, Radius, Mode);
-        }
-        else
-        {
-            _overlay.HideBrush();
-        }
-
         if (Input.SetStart && HasBrushTarget)
         {
             SetStart(hit.point);
@@ -372,6 +406,21 @@ internal sealed class RouteEditor
         if (Input.SetFinish && HasBrushTarget)
         {
             SetFinish(hit.point);
+        }
+
+        if (LineTool)
+        {
+            UpdateLineTool(hit);
+            return;
+        }
+
+        if (HasBrushTarget && !Looking)
+        {
+            _overlay.ShowBrush(hit.point, Radius, Mode);
+        }
+        else
+        {
+            _overlay.HideBrush();
         }
 
         if (Input.PaintPressed)
@@ -388,6 +437,174 @@ internal sealed class RouteEditor
         {
             EndStroke();
         }
+    }
+
+    /// <summary>0-2 are the allow, deny and erase brushes, 3 the line tool.</summary>
+    private void SelectTool(int tool)
+    {
+        EndStroke();
+        EndDrag();
+        LineTool = tool == 3;
+        Input.LineTool = LineTool;
+        if (!LineTool)
+        {
+            Mode = (StrokeMode)tool;
+        }
+        else
+        {
+            SetStatus(Input.UsingGamepad
+                ? $"Line tool: {ModControls.Paint.PadName} on rock adds a point, on a point or the line grabs it."
+                : $"Line tool: {ModControls.Paint.KeyName} on rock adds a point; drag a point, or the line, to move it.");
+        }
+    }
+
+    /// <summary>
+    /// The line tool. Pressing on a control point grabs it; pressing on the line between two points
+    /// puts a new point there and grabs that; pressing anywhere else on rock adds a point at the end.
+    /// Holding on drags the grabbed point over the rock. Delete removes the selected point (the last
+    /// one if none is), and every change is one undo step.
+    /// </summary>
+    private void UpdateLineTool(RaycastHit hit)
+    {
+        var line = _overlay.Line;
+        var aim = AimPosition();
+        var hovered = _dragPoint >= 0 ? _dragPoint : Looking ? -1 : line.PickPoint(_camera, aim);
+        line.Hovered = hovered;
+        line.Selected = SelectedPoint;
+        if (HasBrushTarget && !Looking && hovered < 0)
+        {
+            _overlay.ShowMarker(hit.point, LineMarkerRadius);
+        }
+        else
+        {
+            _overlay.HideBrush();
+        }
+
+        if (Input.ClearLine)
+        {
+            EndDrag();
+            ClearLine();
+        }
+        else if (Input.DeletePoint)
+        {
+            EndDrag();
+            DeletePoint();
+        }
+
+        if (Input.PaintPressed && !Looking)
+        {
+            GrabOrAddPoint(hit, hovered, aim);
+        }
+
+        if (_dragPoint >= 0 && Input.PaintHeld && HasBrushTarget
+            && (_dragFollowing || Vector3.Distance(hit.point, _dragStart) > DragThreshold))
+        {
+            // From here on, the point follows the aim exactly.
+            _dragFollowing = true;
+            MovePoint(_dragPoint, hit);
+        }
+
+        if (Input.PaintReleased)
+        {
+            EndDrag();
+        }
+    }
+
+    private void GrabOrAddPoint(RaycastHit hit, int hovered, Vector2 aim)
+    {
+        _lineBeforeDrag = new List<LinePoint>(Route.Line);
+        if (hovered >= 0)
+        {
+            // Grab an existing point; it moves once the aim leaves the spot it was grabbed at.
+            _dragPoint = hovered;
+            _dragStart = hit.point;
+            _dragFollowing = false;
+            SelectedPoint = hovered;
+            return;
+        }
+
+        if (!HasBrushTarget)
+        {
+            _lineBeforeDrag = null;
+            return;
+        }
+
+        var point = new LinePoint(RouteOverlay.ToNumerics(hit.point), RouteOverlay.ToNumerics(hit.normal));
+        var segment = _overlay.Line.PickSegment(_camera, aim);
+        var index = segment >= 0 ? segment + 1 : Route.Line.Count;
+        Route.Line.Insert(index, point);
+        PushLineUndo();
+        _overlay.SetLine(Route.Line);
+        _dirty = true;
+        _dragPoint = index;
+        _dragFollowing = true;
+        SelectedPoint = index;
+        SetStatus(segment >= 0 ? $"Inserted line point {index + 1} of {Route.Line.Count}." : $"Added line point {Route.Line.Count}.");
+    }
+
+    private void MovePoint(int index, RaycastHit hit)
+    {
+        var point = new LinePoint(RouteOverlay.ToNumerics(hit.point), RouteOverlay.ToNumerics(hit.normal));
+        if (index >= Route.Line.Count || Route.Line[index] == point)
+        {
+            return;
+        }
+
+        PushLineUndo();
+        Route.Line[index] = point;
+        _overlay.SetLine(Route.Line);
+        _dirty = true;
+    }
+
+    /// <summary>Record the line as it was before the current press, once per press.</summary>
+    private void PushLineUndo()
+    {
+        if (_lineBeforeDrag == null)
+        {
+            return;
+        }
+
+        _undo.Push((UndoKind.Line, null, null, _lineBeforeDrag));
+        _lineBeforeDrag = null;
+    }
+
+    private void EndDrag()
+    {
+        _dragPoint = -1;
+        _lineBeforeDrag = null;
+    }
+
+    private void DeletePoint()
+    {
+        if (Route.Line.Count == 0)
+        {
+            SetStatus("The route line has no points to delete.");
+            return;
+        }
+
+        var index = SelectedPoint >= 0 && SelectedPoint < Route.Line.Count ? SelectedPoint : Route.Line.Count - 1;
+        _undo.Push((UndoKind.Line, null, null, new List<LinePoint>(Route.Line)));
+        Route.Line.RemoveAt(index);
+        _overlay.SetLine(Route.Line);
+        _dirty = true;
+        // Step back along the line, so pressing delete again keeps removing towards the start.
+        SelectedPoint = Route.Line.Count == 0 ? -1 : Math.Max(index - 1, 0);
+        SetStatus($"Deleted line point {index + 1}; {Route.Line.Count} left.");
+    }
+
+    private void ClearLine()
+    {
+        if (Route.Line.Count == 0)
+        {
+            return;
+        }
+
+        _undo.Push((UndoKind.Line, null, null, new List<LinePoint>(Route.Line)));
+        Route.Line.Clear();
+        _overlay.SetLine(Route.Line);
+        _dirty = true;
+        SelectedPoint = -1;
+        SetStatus("Cleared the route line (undo brings it back).");
     }
 
     /// <summary>Fly and aim as in the editor, but the only thing to do at the marker is move Ava there.</summary>
@@ -429,12 +646,15 @@ internal sealed class RouteEditor
             GameApi.StreamAroundCamera();
         }
 
-        // With a gamepad there's no cursor, so aim at the middle of the screen.
-        var aim = Input.UsingGamepad ? new Vector2(Screen.width * 0.5f, Screen.height * 0.5f) : Input.PointerPosition;
+        var aim = AimPosition();
         var ray = _camera.ScreenPointToRay(new Vector3(aim.x, aim.y, 0f));
         HasBrushTarget = Physics.Raycast(ray, out var hit, MaxPaintDistance, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore);
         return hit;
     }
+
+    /// <summary>With a gamepad there's no cursor, so it aims at the middle of the screen.</summary>
+    private Vector2 AimPosition() =>
+        Input.UsingGamepad ? new Vector2(Screen.width * 0.5f, Screen.height * 0.5f) : Input.PointerPosition;
 
     private void UpdateLevelSelect()
     {
@@ -533,7 +753,7 @@ internal sealed class RouteEditor
         if (_stroke.Stamps.Count == 0)
         {
             Route.Strokes.Add(_stroke);
-            _undo.Push((UndoKind.Stroke, null, null));
+            _undo.Push((UndoKind.Stroke, null, null, null));
         }
 
         var stamp = new Stamp(position, RouteOverlay.ToNumerics(normal), Radius);
@@ -555,7 +775,7 @@ internal sealed class RouteEditor
 
     private void SetStart(Vector3 point)
     {
-        _undo.Push((UndoKind.Start, Route.Start, null));
+        _undo.Push((UndoKind.Start, Route.Start, null, null));
         Route.Start = new StartPosition { Position = RouteOverlay.ToNumerics(point), YawDegrees = _yaw };
         _overlay.SetStart(Route.Start);
         _dirty = true;
@@ -564,7 +784,7 @@ internal sealed class RouteEditor
 
     private void SetFinish(Vector3 point)
     {
-        _undo.Push((UndoKind.Finish, null, Route.Finish));
+        _undo.Push((UndoKind.Finish, null, Route.Finish, null));
         Route.Finish = new FinishZone { Position = RouteOverlay.ToNumerics(point), Radius = Mathf.Max(Radius, MinFinishRadius) };
         _overlay.SetFinish(Route.Finish);
         _dirty = true;
@@ -574,13 +794,14 @@ internal sealed class RouteEditor
     private void Undo()
     {
         EndStroke();
+        EndDrag();
         if (_undo.Count == 0)
         {
             SetStatus("Nothing to undo.");
             return;
         }
 
-        var (kind, previousStart, previousFinish) = _undo.Pop();
+        var (kind, previousStart, previousFinish, previousLine) = _undo.Pop();
         switch (kind)
         {
             case UndoKind.Stroke:
@@ -595,6 +816,12 @@ internal sealed class RouteEditor
                 Route.Finish = previousFinish;
                 _overlay.SetFinish(previousFinish);
                 break;
+            case UndoKind.Line:
+                Route.Line.Clear();
+                Route.Line.AddRange(previousLine);
+                _overlay.SetLine(Route.Line);
+                SelectedPoint = -1;
+                break;
         }
 
         _dirty = true;
@@ -604,8 +831,10 @@ internal sealed class RouteEditor
     private void SetRoute(Route route)
     {
         EndStroke();
+        EndDrag();
         SaveChanges();
         _undo.Clear();
+        SelectedPoint = -1;
         Route = route;
         _dirty = false;
         _overlay.Rebuild(null);

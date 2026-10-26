@@ -34,9 +34,6 @@ internal sealed class MenuStyle
     /// <summary>False (the title screen's setting): the arrow bounces once each time the selection moves.</summary>
     public bool ArrowBounceAlways { get; private set; }
 
-    /// <summary>True when this came from the title screen, not the fallback.</summary>
-    public bool FromGame { get; private set; }
-
     /// <summary>
     /// The title screen's style if it has been seen, otherwise the best available guess. Until it has
     /// been seen this searches the scene, so read it once per page, not every frame.
@@ -67,10 +64,9 @@ internal sealed class MenuStyle
 
             var style = new MenuStyle
             {
-                Font = Keep(text.font),
-                Material = Keep(text.fontSharedMaterial),
+                Font = RuntimeAssets.Keep(text.font),
+                Material = RuntimeAssets.Keep(text.fontSharedMaterial),
                 FontSize = text.fontSize > 0f ? text.fontSize : 40f,
-                FromGame = true,
             };
 
             if (element.applySelectionColor)
@@ -157,10 +153,10 @@ internal sealed class MenuStyle
             RenderTexture.active = target;
             var width = Mathf.RoundToInt(area.width);
             var height = Mathf.RoundToInt(area.height);
-            var copy = Keep(new Texture2D(width, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
+            var copy = RuntimeAssets.Keep(new Texture2D(width, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear });
             copy.ReadPixels(new Rect(area.x, area.y, width, height), 0, 0);
             copy.Apply();
-            var sprite = Keep(Sprite.Create(copy, new Rect(0f, 0f, width, height), new Vector2(0.5f, 0.5f), source.pixelsPerUnit));
+            var sprite = RuntimeAssets.Keep(Sprite.Create(copy, new Rect(0f, 0f, width, height), new Vector2(0.5f, 0.5f), source.pixelsPerUnit));
             sprite.name = source.name;
             return sprite;
         }
@@ -177,17 +173,5 @@ internal sealed class MenuStyle
                 RenderTexture.ReleaseTemporary(target);
             }
         }
-    }
-
-    /// <summary>Survive the game's asset unloading on scene changes (see DecalPaint.Keep).</summary>
-    private static T Keep<T>(T asset)
-        where T : Object
-    {
-        if (asset != null)
-        {
-            asset.hideFlags |= HideFlags.DontUnloadUnusedAsset;
-        }
-
-        return asset;
     }
 }

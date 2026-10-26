@@ -33,6 +33,7 @@ public sealed class RouteMakerMod : MelonMod
 
     public override void OnInitializeMelon()
     {
+        PaintColors.Load();
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
         ModControls.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Controls.json"));
@@ -79,6 +80,7 @@ public sealed class RouteMakerMod : MelonMod
     public override void OnLateUpdate()
     {
         _editor?.LateUpdate();
+        _overlay?.LateUpdate();
         LevelSelectView.EndFrame();
     }
 

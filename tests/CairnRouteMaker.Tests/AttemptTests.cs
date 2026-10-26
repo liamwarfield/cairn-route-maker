@@ -63,7 +63,6 @@ public class AttemptTests
 
         Assert.True(attempt.OnGrab(route, new Vector3(0, 5, 1)));
         Assert.True(attempt.OffRoute);
-        Assert.Equal(new Vector3(0, 5, 1), attempt.OffRoutePoint);
         Assert.False(attempt.OnGrab(route, new Vector3(5, 5, 1)));
         Assert.Equal(AttemptState.Climbing, attempt.State);
 

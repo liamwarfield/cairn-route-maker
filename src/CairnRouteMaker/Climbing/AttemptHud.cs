@@ -1,3 +1,5 @@
+using CairnRouteMaker.Editor;
+using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using UnityEngine;
 
@@ -28,7 +30,10 @@ internal static class AttemptHud
         DrawTimer(tracker);
     }
 
-    /// <summary>Green if the hold the moving limb is heading for is on-route, red if it isn't.</summary>
+    /// <summary>
+    /// The allow paint colour if the hold the moving limb is heading for is on-route, the deny paint
+    /// colour if it isn't, so it reads like the paint on the rock.
+    /// </summary>
     private static void DrawNextGrab(NextGrabStatus status)
     {
         if (status == NextGrabStatus.Hidden)
@@ -36,10 +41,10 @@ internal static class AttemptHud
             return;
         }
 
-        var color = status switch
+        Color color = status switch
         {
-            NextGrabStatus.Valid => Complete,
-            NextGrabStatus.Invalid => Failed,
+            NextGrabStatus.Valid => PaintColors.Allow,
+            NextGrabStatus.Invalid => PaintColors.Deny,
             _ => NoGrab,
         };
         var disc = Disc();
@@ -108,9 +113,7 @@ internal static class AttemptHud
         }
 
         const int size = 64;
-        _disc = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-        // Survive the game's asset unloading on zone changes (see DecalPaint.Keep).
-        _disc.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+        _disc = RuntimeAssets.Keep(new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear });
         var radius = size / 2f;
         for (var y = 0; y < size; y++)
         {

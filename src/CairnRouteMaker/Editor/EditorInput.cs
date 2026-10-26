@@ -14,6 +14,8 @@ namespace CairnRouteMaker.Editor;
 ///   left stick move, right stick look, LB/RB down/up, hold LT fast,
 ///   RT paint, X cycle brush, D-pad up/down brush size, Y set start, A set finish,
 ///   View undo, D-pad right save, Menu play-test, D-pad left level select, B close.
+///   With the line tool (the fourth brush): RT adds or drags points, D-pad down deletes the
+///   selected point and holding it clears the line.
 ///   In freecam: A moves Ava to the marker; editing controls do nothing.
 ///   R3 on its own switches between editing and freecam.
 ///   L3+R3 opens and closes the editor from anywhere (handled by the mod, not here).
@@ -30,13 +32,21 @@ internal sealed class EditorInput
     private const float StickLookSpeed = 140f;
     private const float MouseLookSensitivity = 0.12f;
 
+    /// <summary>Holding the gamepad's delete-point button this long with the line tool clears the line.</summary>
+    private const float ClearHoldSeconds = 1f;
+
     // The gamepad's freecam button (R3) switches modes on release, so pressing it as half of
     // L3+R3 doesn't also switch.
     private bool _toggleDown;
     private bool _toggleCombo;
+    private float _clearHeld;
+    private bool _clearFired;
 
     /// <summary>True once the gamepad was the last device touched; switches the brush to screen-centre aiming.</summary>
     public bool UsingGamepad { get; private set; }
+
+    /// <summary>Set by the editor while the line tool is in use: the D-pad edits points instead of sizing the brush.</summary>
+    public bool LineTool { get; set; }
 
     // Continuous controls, read each frame.
     public Vector3 Move { get; private set; }
@@ -63,6 +73,9 @@ internal sealed class EditorInput
     public bool LevelSelect { get; private set; }
     public bool Teleport { get; private set; }
     public bool ToggleFreecam { get; private set; }
+    public bool DeletePoint { get; private set; }
+    public bool ClearLine { get; private set; }
+    public bool ToggleLine { get; private set; }
 
     // Menu navigation (level select).
     public int MenuMove { get; private set; }
@@ -84,6 +97,8 @@ internal sealed class EditorInput
     {
         _toggleDown = false;
         _toggleCombo = false;
+        _clearHeld = 0f;
+        _clearFired = false;
     }
 
     public void Read(float dt)
@@ -104,6 +119,7 @@ internal sealed class EditorInput
         CycleBrush = false;
         SelectBrush = null;
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
+        DeletePoint = ClearLine = ToggleLine = false;
         MenuMove = 0;
         MenuConfirm = MenuBack = MenuClick = false;
 
@@ -150,6 +166,7 @@ internal sealed class EditorInput
             if (ModControls.AllowBrush.KeyPressed) SelectBrush = 0;
             if (ModControls.DenyBrush.KeyPressed) SelectBrush = 1;
             if (ModControls.EraseBrush.KeyPressed) SelectBrush = 2;
+            if (ModControls.LineTool.KeyPressed) SelectBrush = 3;
             SetStart |= ModControls.SetStart.KeyPressed;
             SetFinish |= ModControls.SetFinish.KeyPressed;
             Undo |= ctrl && ModControls.Undo.KeyPressed;
@@ -158,6 +175,9 @@ internal sealed class EditorInput
             // The keyboard's open-editor and freecam keys are handled by the mod itself, so they work with the editor closed too.
             Close |= ModControls.Exit.KeyPressed;
             LevelSelect |= ModControls.LevelSelect.KeyPressed;
+            DeletePoint |= !ctrl && ModControls.DeletePoint.KeyPressed;
+            ClearLine |= ctrl && ModControls.DeletePoint.KeyPressed;
+            ToggleLine |= ModControls.ShowLine.KeyPressed;
 
             if (keyboard.upArrowKey.wasPressedThisFrame || ModControls.MoveForward.KeyPressed) MenuMove -= 1;
             if (keyboard.downArrowKey.wasPressedThisFrame || ModControls.MoveBack.KeyPressed) MenuMove += 1;
@@ -187,9 +207,16 @@ internal sealed class EditorInput
             paintPressed |= ModControls.Paint.PadPressed;
             paintReleased |= ModControls.Paint.PadReleased;
 
-            // Held on a gamepad, the brush keeps growing or shrinking.
-            if (ModControls.BrushBigger.PadHeld) brushScale *= Mathf.Pow(2f, dt);
-            if (ModControls.BrushSmaller.PadHeld) brushScale /= Mathf.Pow(2f, dt);
+            if (LineTool)
+            {
+                ReadLinePad(dt);
+            }
+            else
+            {
+                // Held on a gamepad, the brush keeps growing or shrinking.
+                if (ModControls.BrushBigger.PadHeld) brushScale *= Mathf.Pow(2f, dt);
+                if (ModControls.BrushSmaller.PadHeld) brushScale /= Mathf.Pow(2f, dt);
+            }
 
             CycleBrush |= ModControls.CycleBrush.PadPressed;
             SetStart |= ModControls.SetStart.PadPressed;
@@ -232,6 +259,25 @@ internal sealed class EditorInput
         PaintPressed = paintPressed;
         PaintReleased = paintReleased;
         BrushScale = brushScale;
+    }
+
+    /// <summary>The delete-point button deletes a point; held on, it clears the whole line once.</summary>
+    private void ReadLinePad(float dt)
+    {
+        DeletePoint |= ModControls.DeletePoint.PadPressed;
+        if (!ModControls.DeletePoint.PadHeld)
+        {
+            _clearHeld = 0f;
+            _clearFired = false;
+            return;
+        }
+
+        _clearHeld += dt;
+        if (_clearHeld >= ClearHoldSeconds && !_clearFired)
+        {
+            ClearLine = true;
+            _clearFired = true;
+        }
     }
 
     private static Vector2 Deadzone(Vector2 stick) => stick.magnitude < StickDeadzone ? Vector2.zero : stick;

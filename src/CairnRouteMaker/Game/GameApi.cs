@@ -194,6 +194,15 @@ internal static class GameApi
         }
     }
 
+    /// <summary>Split a "World/Zone" key (see <see cref="CurrentZoneKey"/>) into its parts.</summary>
+    public static bool TryParseZoneKey(string zoneKey, out StreamingTweakables.World world, out string zone)
+    {
+        var parts = zoneKey?.Split('/', 2);
+        world = default;
+        zone = parts is { Length: 2 } ? parts[1] : null;
+        return zone != null && Enum.TryParse(parts[0], out world);
+    }
+
     public static string GameVersion
     {
         get
@@ -209,9 +218,9 @@ internal static class GameApi
         }
     }
 
-    public readonly record struct WorldInfo(StreamingTweakables.World Id, bool IsCurrent, bool IsUnlocked);
+    public readonly record struct WorldInfo(StreamingTweakables.World Id, bool IsCurrent);
 
-    public readonly record struct ZoneInfo(string Name, bool IsCurrent, bool IsDiscovered);
+    public readonly record struct ZoneInfo(string Name, bool IsCurrent);
 
     public static StreamingTweakables.World? CurrentWorld
     {
@@ -229,22 +238,16 @@ internal static class GameApi
         }
     }
 
-    /// <summary>The playable mountains (not the test world), with whether the save has unlocked them.</summary>
+    /// <summary>The playable mountains (not the test world) the game knows about.</summary>
     public static List<WorldInfo> Worlds()
     {
         var result = new List<WorldInfo>();
-        var scenes = CairnSceneManager.Instance;
         var current = CurrentWorld;
-        if (scenes == null)
-        {
-            return result;
-        }
-
         foreach (var id in new[] { StreamingTweakables.World.Kami, StreamingTweakables.World.Lakpa, StreamingTweakables.World.Tenzing, StreamingTweakables.World.Apa })
         {
-            if (scenes.TryGetWorld(id, out var data) && data != null)
+            if (TryGetWorldData(id, out _))
             {
-                result.Add(new WorldInfo(id, id == current, data.IsUnlocked));
+                result.Add(new WorldInfo(id, id == current));
             }
         }
 
@@ -256,20 +259,9 @@ internal static class GameApi
     {
         var result = new List<ZoneInfo>();
         var streaming = StreamingManager.Instance;
-        var scenes = CairnSceneManager.Instance;
-        if (streaming == null || scenes == null || !TryGetWorldData(world, out var data) || data.zones == null)
+        if (streaming == null || !TryGetWorldData(world, out var data) || data.zones == null)
         {
             return result;
-        }
-
-        var discovered = new HashSet<string>();
-        var discoveredList = scenes.discoveredZones;
-        if (discoveredList != null)
-        {
-            foreach (var zone in discoveredList)
-            {
-                discovered.Add(zone.name);
-            }
         }
 
         var currentName = CurrentWorld != world || streaming.CurrentZone == null ? null : streaming.CurrentZone.name;
@@ -277,7 +269,7 @@ internal static class GameApi
         {
             if (zone != null)
             {
-                result.Add(new ZoneInfo(zone.name, zone.name == currentName, discovered.Contains(zone.name)));
+                result.Add(new ZoneInfo(zone.name, zone.name == currentName));
             }
         }
 
@@ -350,15 +342,7 @@ internal static class GameApi
             return false;
         }
 
-        ZoneSceneData zone = null;
-        foreach (var candidate in data.zones)
-        {
-            if (candidate != null && candidate.name == zoneName)
-            {
-                zone = candidate;
-            }
-        }
-
+        var zone = FindZone(data, zoneName);
         ZoneSceneData.SpawnerInfo spawner = null;
         if (zone?.spawnersForMainMenu != null)
         {
@@ -485,6 +469,19 @@ internal static class GameApi
         data = null;
         var scenes = CairnSceneManager.Instance;
         return scenes != null && scenes.TryGetWorld(world, out data) && data != null;
+    }
+
+    private static ZoneSceneData FindZone(WorldZoneData world, string name)
+    {
+        foreach (var zone in world.zones)
+        {
+            if (zone != null && zone.name == name)
+            {
+                return zone;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -644,7 +641,7 @@ internal static class GameApi
     /// <summary>Whether Ava is in the world and nothing is loading: safe to start a trip or warp.</summary>
     public static bool CanMoveAva(out string reason)
     {
-        if (!IsAvaReady || Switcher == null)
+        if (!IsAvaReady)
         {
             reason = "Ava isn't in the world yet.";
             return false;
@@ -669,18 +666,16 @@ internal static class GameApi
         }
 
         var streaming = StreamingManager.Instance;
-        foreach (var zone in streaming.World.zones)
+        var zone = FindZone(streaming.World, zoneName);
+        if (zone == null)
         {
-            if (zone.name == zoneName)
-            {
-                RespawnInZone(streaming.World, zone);
-                CairnSceneManager.Instance.TravelToZone(zone, streaming.World);
-                return true;
-            }
+            reason = $"No zone called {zoneName} in {streaming.World.WorldId}.";
+            return false;
         }
 
-        reason = $"No zone called {zoneName} in {streaming.World.WorldId}.";
-        return false;
+        RespawnInZone(streaming.World, zone);
+        CairnSceneManager.Instance.TravelToZone(zone, streaming.World);
+        return true;
     }
 
     /// <summary>
@@ -731,12 +726,9 @@ internal static class GameApi
             named = named[..space];
         }
 
-        foreach (var candidate in world.zones)
+        if (FindZone(world, named) != null)
         {
-            if (candidate != null && candidate.name == named)
-            {
-                return listed;
-            }
+            return listed;
         }
 
         var corrected = prefix + zone.name;

@@ -91,6 +91,40 @@ public class RouteTests
     }
 
     [Fact]
+    public void RoundTripsTheRouteLine()
+    {
+        var route = new Route { ZoneKey = "Kami/A" };
+        route.Line.Add(new LinePoint(new Vector3(1, 2, 3), Vector3.UnitZ));
+        route.Line.Add(new LinePoint(new Vector3(1, 7, 3.5f), -Vector3.UnitX));
+
+        var json = RouteFile.Serialize(route);
+        var copy = RouteFile.Deserialize(json);
+
+        Assert.Contains("\"formatVersion\": 4", json);
+        Assert.Equal(route.Line, copy.Line);
+        Assert.False(copy.IsEmpty);
+    }
+
+    [Fact]
+    public void LeavesTheLineOutWhenThereIsNone()
+    {
+        var json = RouteFile.Serialize(new Route { ZoneKey = "Kami/A" });
+
+        Assert.DoesNotContain("\"line\"", json);
+        Assert.Empty(RouteFile.Deserialize(json).Line);
+    }
+
+    [Fact]
+    public void ReadsVersionThreeFilesWithoutALine()
+    {
+        var route = RouteFile.Deserialize(
+            "{\"formatVersion\": 3, \"zoneKey\": \"Kami/A\", \"finish\": {\"position\": [0,5,0], \"radius\": 1}, \"strokes\": []}");
+
+        Assert.Empty(route.Line);
+        Assert.Equal(1f, route.Finish.Radius);
+    }
+
+    [Fact]
     public void RejectsNewerFormats()
     {
         Assert.Throws<InvalidDataException>(() => RouteFile.Deserialize("{\"formatVersion\": 99}"));

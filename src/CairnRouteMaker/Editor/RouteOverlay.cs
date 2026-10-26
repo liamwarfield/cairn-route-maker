@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using MelonLoader;
@@ -9,7 +11,7 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// Draws a route in the world: the painted strokes (as decals, see <see cref="DecalPaint"/>),
-/// the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
+/// the route line (see <see cref="RouteLine"/>), the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
 /// nor Ava's grab checks can hit it.
 /// </summary>
 internal sealed class RouteOverlay
@@ -20,14 +22,16 @@ internal sealed class RouteOverlay
     private static readonly Color FinishColor = new(0.25f, 0.6f, 1f, 0.3f);
 
     // Strong enough to read through the game's colour grading; erase is black so it can't be
-    // mistaken for deny.
-    private static readonly Color BrushAllowColor = new(1f, 0.82f, 0.15f, 0.4f);
-    private static readonly Color BrushDenyColor = new(0.95f, 0.1f, 0.05f, 0.45f);
+    // mistaken for deny. Allow and deny take the paint colours (see PaintColors).
+    private const float BrushAllowAlpha = 0.4f;
+    private const float BrushDenyAlpha = 0.45f;
     private static readonly Color BrushEraseColor = new(0f, 0f, 0f, 0.55f);
     private static readonly Color MarkerColor = new(0.9f, 0.95f, 1f, 0.5f);
 
     private readonly GameObject _root;
     private readonly DecalPaint _paint;
+    private readonly RouteLine _line;
+    private bool _editingLine;
     private int _strokeCount;
     private readonly GameObject _start;
     private readonly GameObject _finish;
@@ -45,9 +49,11 @@ internal sealed class RouteOverlay
         CreateMaterials();
         _paint = new DecalPaint(_root.transform)
         {
-            DrawingFinished = (cells, workMs, wallMs) =>
-                MelonLogger.Msg($"Drew route paint: {cells} decals, {workMs:0} ms of work over {wallMs:0} ms."),
+            DrawingFinished = summary => MelonLogger.Msg($"Drew route paint: {summary}"),
         };
+        _line = new RouteLine(_root.transform);
+        ApplyPaintColors();
+        PaintColors.Changed += ApplyPaintColors;
 
         _start = CreateStartMarker();
         _start.SetActive(false);
@@ -69,8 +75,6 @@ internal sealed class RouteOverlay
         }
     }
 
-    public int PaintCellCount => _paint.CellCount;
-
     /// <summary>
     /// Show a whole route, or nothing for null. The paint is queued and drawn a few milliseconds
     /// per frame, so it fills in over a moment rather than stalling the game; the log reports the total.
@@ -81,6 +85,7 @@ internal sealed class RouteOverlay
         _strokeCount = 0;
         SetStart(route?.Start);
         SetFinish(route?.Finish);
+        SetLine(route == null ? System.Array.Empty<LinePoint>() : route.Line);
         if (route == null)
         {
             return;
@@ -98,8 +103,54 @@ internal sealed class RouteOverlay
         _paint.ReportWhenDrawn();
     }
 
-    /// <summary>Do this frame's share of queued paint drawing; call every frame.</summary>
-    public void Flush() => _paint.Flush();
+    /// <summary>Do this frame's share of queued paint drawing and pulse the glow; call every frame.</summary>
+    public void Flush()
+    {
+        _paint.Flush();
+        _paint.Animate(Time.unscaledTime);
+    }
+
+    /// <summary>Lay the route line out for the camera; call after the camera has moved for the frame.</summary>
+    public void LateUpdate()
+    {
+        try
+        {
+            _line.Update(Camera.main);
+        }
+        catch (Exception e)
+        {
+            // Every frame would log the same thing: hide the line until the next change instead.
+            MelonLogger.Error($"Drawing the route line failed: {e}");
+            _line.Visible = false;
+        }
+    }
+
+    /// <summary>The route line, for the editor's selection and hover highlights.</summary>
+    public RouteLine Line => _line;
+
+    public void SetLine(IReadOnlyList<LinePoint> points) => _line.SetPoints(points);
+
+    /// <summary>While the line tool is in use the line shows, with every control point, even if it's switched off.</summary>
+    public bool EditingLine
+    {
+        get => _editingLine;
+        set
+        {
+            if (_editingLine == value)
+            {
+                return;
+            }
+
+            _editingLine = value;
+            _line.ShowControlPoints = value;
+            _line.Visible = value || PaintColors.ShowLine;
+            if (!value)
+            {
+                _line.Selected = -1;
+                _line.Hovered = -1;
+            }
+        }
+    }
 
     public void BeginStroke() => _strokeCount++;
 
@@ -142,24 +193,20 @@ internal sealed class RouteOverlay
     }
 
     /// <summary>A translucent sphere the size of the brush, tinted by mode.</summary>
-    public void ShowBrush(Vector3 position, float radius, StrokeMode mode)
-    {
-        _brush.SetActive(true);
-        _brush.transform.position = position;
-        _brush.transform.localScale = Vector3.one * radius * 2f;
-        _brush.GetComponent<Renderer>().sharedMaterial = _brushMaterials[(int)mode];
-    }
+    public void ShowBrush(Vector3 position, float radius, StrokeMode mode) => ShowSphere(position, radius, _brushMaterials[(int)mode]);
 
     /// <summary>The freecam's marker: where Ava goes if she's moved. Shares the brush's sphere.</summary>
-    public void ShowMarker(Vector3 position, float radius)
+    public void ShowMarker(Vector3 position, float radius) => ShowSphere(position, radius, _markerMaterial);
+
+    public void HideBrush() => _brush.SetActive(false);
+
+    private void ShowSphere(Vector3 position, float radius, Material material)
     {
         _brush.SetActive(true);
         _brush.transform.position = position;
         _brush.transform.localScale = Vector3.one * radius * 2f;
-        _brush.GetComponent<Renderer>().sharedMaterial = _markerMaterial;
+        _brush.GetComponent<Renderer>().sharedMaterial = material;
     }
-
-    public void HideBrush() => _brush.SetActive(false);
 
     public static Vector3 ToUnity(NVector3 v) => new(v.X, v.Y, v.Z);
 
@@ -202,21 +249,31 @@ internal sealed class RouteOverlay
     {
         _startMaterial = CreateMaterial(StartColor);
         _finishMaterial = CreateMaterial(FinishColor);
-        _brushMaterials = new[] { CreateMaterial(BrushAllowColor), CreateMaterial(BrushDenyColor), CreateMaterial(BrushEraseColor) };
+        // Allow and deny are tinted by ApplyPaintColors.
+        _brushMaterials = new[] { CreateMaterial(Color.clear), CreateMaterial(Color.clear), CreateMaterial(BrushEraseColor) };
         _markerMaterial = CreateMaterial(MarkerColor);
     }
 
-    private static Shader _shader;
-
-    private static Material CreateMaterial(Color color)
+    /// <summary>Redraw the paint in the current paint colours and style, and retint the brush.</summary>
+    private void ApplyPaintColors()
     {
-        var material = new Material(FindShader()) { color = color, renderQueue = 3000 };
-        // Survive the game's asset unloading on zone changes (see DecalPaint.Keep).
-        material.hideFlags |= HideFlags.DontUnloadUnusedAsset;
-        return material;
+        _paint.SetColors(PaintColors.Allow, PaintColors.Deny);
+        _paint.SetStyle(PaintColors.ShowsFill, PaintColors.ShowsGlow);
+        _paint.GlowPulse = PaintColors.GlowPulse;
+        _brushMaterials[(int)StrokeMode.Allow].color = WithAlpha(PaintColors.Allow, BrushAllowAlpha);
+        _brushMaterials[(int)StrokeMode.Deny].color = WithAlpha(PaintColors.Deny, BrushDenyAlpha);
+        _line.SetColor(PaintColors.Line);
+        _line.Visible = _editingLine || PaintColors.ShowLine;
     }
 
-    private static Shader FindShader()
+    private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);
+
+    private static Shader _shader;
+
+    private static Material CreateMaterial(Color color) =>
+        RuntimeAssets.Keep(new Material(FindShader()) { color = color, renderQueue = 3000 });
+
+    internal static Shader FindShader()
     {
         if (_shader != null)
         {
