@@ -24,7 +24,14 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
 - Game API: `PawnControllerSwitcher.TransitionToMode(Mode, Vector3? pos, Quaternion? rot, bool force, Context ctx, bool checkShouldHover)`. **sig**
   - It has 52 native callers, including `NetplaySpawn.TeleportLocalPlayerTo`, `SpawnerMC.TeleportTo` and `FreeRoamManager.WarpRoutine`. **xref**
   - With `checkShouldHover: true`, Ava hovers until the target zone has streamed in. **xref**; whether that works for far targets is a **guess** until tested at runtime.
-  - Passing `Mode.Climbing` may place her straight onto a wall, which would give us wall starts later. **guess**
+  - Passing `Mode.Climbing` puts her straight onto a wall (**xref**; the mod uses it for wall starts):
+    1. `TransitionToMode` sets the root position, and the rotation only if one is given, then switches mode.
+    2. `ClimbingV2PawnController.ResetClimber(ClimbingStartMode.Default)` runs `ResetLimbs` and `HoldsSetUtility.Refresh` / `ApplyImmediate`, which grab holds at once. Then `UpdateClosestWallPointPosAndNormal` and `UpdateTransformForward` turn her to face the rock.
+  - **Fly mode's "go to climb"** is the game's own dev tool for this (`PawnControllerFlyMode.Update` / `GoToState`, **xref**):
+    1. It runs `Physics.SphereCast` from the fly pawn along its forward: radius 0.3, 50 m, `Helpers.ClimbingWallAndGroundLayerMask`.
+    2. `RaycastHitExtensions.GetCapsulePoleForHitPosition(hit, origin, dir)` (in `Il2CppTheGameBakers.Cairn.Utilities`) gives the sphere's centre at impact, 0.3 m off the rock. It becomes `offStateParameters.position`.
+    3. On exit it moves her root there, keeping a yaw-only rotation, and calls `TransitionToMode(Climbing, null, null, false, None, true)`.
+  - The game's debug commands `ClimberMemorySaveDC` / `ClimberMemoryRestoreDC` and the climb snapshots (`SceneSnapshotClimbData`: a hold id per limb) restore an exact saved grip. They can't place her at an arbitrary point.
 - Full sequence in `FreeRoamManager.WarpRoutine` (**xref**):
   1. Wait while `CairnSceneManager.IsBusy()`.
   2. `PathRecorder.HaltPath()`.
@@ -182,6 +189,14 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
   6. Detach and remove the last securing piton from the `Lifeline`.
   7. `PawnManager.Respawn` when needed.
   8. `ResumePath()`, then save.
+
+  `WarpToPoint` is `CairnSceneManager.ShowLoadingScreen`, then `WarpRoutine` (public), then `HideLoadingScreen`. The routine always ends with `SavegameManager.Save`, which shows the auto-save icon. Its other steps can be called directly, which is what the mod does for hops within the loaded zone:
+  - `switcher.PathRecorder.HaltPath()` / `ResumePath()`.
+  - `PawnManager.UnEquipAllIceClimbingDevices(true, true, true)`, or `EquipAllIceClimbigDevices(true, false)` when the point has `setIceEquipment` (see Ice gear above).
+  - `climbingPawnController.associatedRobotPawn.TeleportNearClimber(true, true)`.
+  - Loop over `climbingPawnController.harness.Lifeline.GetLastSecuringPiton()`: `DetachPiton` if the piton's object is alive, `RemovePiton` otherwise.
+
+  The warp passes the point's position but no rotation (`TransitionToMode(wp.warpMode, pos, null, true, None, true)`), so with `warpMode = Climbing` the climbing reset decides which way she faces.
 
   A bare `TransitionToMode` skips these steps. In testing it sometimes left Ava T-posed and unusable, and it does nothing useful while she's climbing.
 - **Warp points from code:**

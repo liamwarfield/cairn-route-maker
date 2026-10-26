@@ -941,56 +941,118 @@ internal static class GameApi
     }
 
     /// <summary>
-    /// Put Ava at a position using the game's own free-roam warp (what its map uses): it shows a
-    /// loading screen, takes her off the wall, unclips the rope from the last piton, brings the
-    /// Climbot along and respawns her if needed. A bare TransitionToMode skips all that and can
-    /// leave her T-posed, so it's only the fallback when the warp isn't there.
-    /// The warp also puts on or takes off her ice gear as its warp point says, so our point keeps
-    /// whatever she has now.
+    /// Where and how to put Ava for a point picked on the rock: <see cref="Mode"/> is Walking for
+    /// ground she can stand on and Climbing for a wall, with <see cref="Position"/> moved off the
+    /// rock and <see cref="Rotation"/> facing it.
     /// </summary>
-    public static bool TryTeleportAva(Vector3 position, float yawDegrees, out string reason)
+    public readonly record struct Placement(Vector3 Position, Quaternion Rotation, PawnControllerSwitcher.Mode Mode);
+
+    /// <summary>
+    /// How far off the rock Ava's root goes on a wall: the radius of the sphere the game's fly mode
+    /// casts at the rock to find where to drop her when it puts her on a wall.
+    /// </summary>
+    private const float WallStandOff = 0.3f;
+
+    /// <summary>Rock steeper than about 45 degrees is a wall, so she starts on it rather than on her feet.</summary>
+    private const float MinGroundNormalY = 0.7f;
+
+    /// <summary>How close the probe has to find rock to the picked point to trust its normal.</summary>
+    private const float SurfaceProbeTolerance = 0.2f;
+
+    private static readonly Vector3[] SurfaceProbeDirections = BuildSurfaceProbeDirections();
+
+    /// <summary>
+    /// Decide how Ava should arrive at a point on the rock. Route starts only store a point and a
+    /// yaw, so the surface is probed again here; if it can't be found she arrives on her feet.
+    /// </summary>
+    public static Placement PlaceAva(Vector3 point, float yawDegrees)
+    {
+        var standing = new Placement(point, Quaternion.Euler(0f, yawDegrees, 0f), PawnControllerSwitcher.Mode.Walking);
+        if (!TryFindSurfaceNormal(point, out var normal) || normal.y >= MinGroundNormalY)
+        {
+            return standing;
+        }
+
+        // Face into the rock, upright, the way fly mode drops her. Under a roof there's no
+        // horizontal direction to face, so keep the yaw she was given.
+        var facing = new Vector3(-normal.x, 0f, -normal.z);
+        var rotation = facing.sqrMagnitude > 0.01f ? Quaternion.LookRotation(facing.normalized, Vector3.up) : standing.Rotation;
+        return new Placement(point + normal * WallStandOff, rotation, PawnControllerSwitcher.Mode.Climbing);
+    }
+
+    /// <summary>
+    /// The normal of the rock at <paramref name="point"/>: cast at it from all round and keep the hit
+    /// that lands closest. Rays starting inside the rock pass out through its back faces and miss.
+    /// </summary>
+    private static bool TryFindSurfaceNormal(Vector3 point, out Vector3 normal)
+    {
+        const float reach = 1f;
+        var mask = SurfaceMask;
+        var best = SurfaceProbeTolerance * SurfaceProbeTolerance;
+        normal = Vector3.up;
+        var found = false;
+        foreach (var direction in SurfaceProbeDirections)
+        {
+            if (!Physics.Raycast(point + direction * reach, -direction, out var hit, reach * 1.5f, mask, QueryTriggerInteraction.Ignore))
+            {
+                continue;
+            }
+
+            var distance = (hit.point - point).sqrMagnitude;
+            if (distance <= best)
+            {
+                best = distance;
+                normal = hit.normal;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>The 26 directions to the faces, edges and corners of a cube around the point.</summary>
+    private static Vector3[] BuildSurfaceProbeDirections()
+    {
+        var directions = new List<Vector3>();
+        for (var x = -1; x <= 1; x++)
+        {
+            for (var y = -1; y <= 1; y++)
+            {
+                for (var z = -1; z <= 1; z++)
+                {
+                    if (x != 0 || y != 0 || z != 0)
+                    {
+                        directions.Add(new Vector3(x, y, z).normalized);
+                    }
+                }
+            }
+        }
+
+        return directions.ToArray();
+    }
+
+    /// <summary>
+    /// Put Ava at a point on the rock using the game's own free-roam warp (what its map uses): it
+    /// shows a loading screen, takes her off the wall, unclips the rope from the last piton, stows
+    /// ice tools, brings the Climbot along and respawns her if needed. On a wall the warp puts her
+    /// straight into climbing, the same way the map's wall warp points do.
+    /// </summary>
+    public static bool TryTeleportAva(Vector3 point, float yawDegrees, out string reason)
     {
         if (!CanMoveAva(out reason))
         {
             return false;
         }
 
-        var rotation = Quaternion.Euler(0f, yawDegrees, 0f);
-        var freeRoam = FreeRoamManager.Instance;
-        if (freeRoam != null)
-        {
-            // Kept inactive so the point never runs Awake and joins the game's own warp list.
-            var go = new GameObject("CairnRouteMaker warp point");
-            go.SetActive(false);
-            go.transform.SetPositionAndRotation(position, rotation);
-            var point = go.AddComponent<FreeRoamWarpPoint>();
-            point.warpMode = PawnControllerSwitcher.Mode.Walking;
-            point.setIceEquipment = ShouldWearIceGear;
-            try
-            {
-                freeRoam.WarpToPoint(point, (Disk.IOOperationCallback)new Action<bool>(_ => Object.Destroy(go)));
-                return true;
-            }
-            catch (Exception e)
-            {
-                MelonLogger.Warning($"Free-roam warp failed, falling back to a direct teleport: {e.Message}");
-                Object.Destroy(go);
-            }
-        }
-        else
-        {
-            MelonLogger.Warning("No FreeRoamManager in this game mode; using a direct teleport.");
-        }
-
-        return TryDirectTeleport(position, rotation, out reason);
+        var placement = PlaceAva(point, yawDegrees);
+        return TryWarp(placement) || TryHop(placement, out reason);
     }
 
     /// <summary>
-    /// Move Ava without the warp's loading screen, for short hops: a bare TransitionToMode, used
-    /// only when she's on her feet and the target is in the zone that's already loaded. Anything
-    /// else (climbing, another zone) goes through <see cref="TryTeleportAva"/> and its loading screen.
+    /// Move Ava within the zone that's already loaded, with no loading screen and no save (see
+    /// <see cref="TryHop"/>). Another zone goes through <see cref="TryTeleportAva"/>.
     /// </summary>
-    public static bool TryQuickTeleportAva(Vector3 position, float yawDegrees, out string reason)
+    public static bool TryQuickTeleportAva(Vector3 point, float yawDegrees, out string reason)
     {
         if (!CanMoveAva(out reason))
         {
@@ -998,15 +1060,148 @@ internal static class GameApi
         }
 
         var streaming = StreamingManager.Instance;
-        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(position);
+        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(point);
         var sameZone = targetZone != null && streaming.CurrentZone != null && targetZone.name == streaming.CurrentZone.name;
-        if (Switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking || !sameZone)
+        if (!sameZone)
         {
-            MelonLogger.Msg($"Quick teleport not possible ({Switcher.CurrentMode}, target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
-            return TryTeleportAva(position, yawDegrees, out reason);
+            MelonLogger.Msg($"Quick teleport not possible (target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
+            return TryTeleportAva(point, yawDegrees, out reason);
         }
 
-        return TryDirectTeleport(position, Quaternion.Euler(0f, yawDegrees, 0f), out reason);
+        return TryHop(PlaceAva(point, yawDegrees), out reason);
+    }
+
+    private static bool TryWarp(Placement placement)
+    {
+        var freeRoam = FreeRoamManager.Instance;
+        if (freeRoam == null)
+        {
+            MelonLogger.Warning("No FreeRoamManager in this game mode; teleporting without the warp.");
+            return false;
+        }
+
+        // Kept inactive so the point never runs Awake and joins the game's own warp list. The
+        // warp ignores the point's rotation; on a wall the climbing controller turns her to face
+        // the rock itself when it sets her up.
+        var go = new GameObject("CairnRouteMaker warp point");
+        go.SetActive(false);
+        go.transform.SetPositionAndRotation(placement.Position, placement.Rotation);
+        var warpPoint = go.AddComponent<FreeRoamWarpPoint>();
+        warpPoint.warpMode = placement.Mode;
+
+        // The warp takes the ice gear off unless the point says to wear it, and sets the game's
+        // "wear ice gear" flag to match. Free climb hands it out, so keep whatever she has.
+        warpPoint.setIceEquipment = ShouldWearIceGear;
+        try
+        {
+            MelonLogger.Msg($"Warping Ava to {placement.Position} ({placement.Mode}).");
+            freeRoam.WarpToPoint(warpPoint, (Disk.IOOperationCallback)new Action<bool>(_ => Object.Destroy(go)));
+            return true;
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Warning($"Free-roam warp failed: {e.Message}");
+            Object.Destroy(go);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The steps of the warp's own routine (FreeRoamManager.WarpRoutine) without the loading screen
+    /// around it or the save it ends with, which shows the auto-save icon. Unlike the routine it
+    /// passes the rotation on, so on a wall she starts out facing the rock, as fly mode drops her.
+    /// </summary>
+    private static bool TryHop(Placement placement, out string reason)
+    {
+        var switcher = Switcher;
+        var climbing = switcher.climbingPawnController;
+        var path = switcher.PathRecorder;
+        try
+        {
+            MelonLogger.Msg($"Moving Ava to {placement.Position} ({placement.Mode}).");
+            if (path != null)
+            {
+                path.HaltPath();
+            }
+
+            // As the warp does: re-equip the ice gear she's meant to wear, or put it away. Putting it
+            // away also stops her limbs using it afterwards.
+            var pawns = PawnManager.Instance;
+            if (pawns != null)
+            {
+                if (ShouldWearIceGear)
+                {
+                    pawns.EquipAllIceClimbigDevices(true, false);
+                }
+                else
+                {
+                    pawns.UnEquipAllIceClimbingDevices(true, true, true);
+                }
+            }
+
+            switcher.TransitionToMode(
+                placement.Mode,
+                new Il2CppSystem.Nullable<Vector3>(placement.Position),
+                new Il2CppSystem.Nullable<Quaternion>(placement.Rotation),
+                true,
+                PawnControllerSwitcher.Context.None,
+                true);
+
+            var robot = climbing == null ? null : climbing.associatedRobotPawn;
+            if (robot != null)
+            {
+                robot.TeleportNearClimber(true, true);
+            }
+
+            UnclipRope(climbing);
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Error($"Teleport failed: {e}");
+            reason = "The game refused the teleport (see log).";
+            return false;
+        }
+        finally
+        {
+            if (path != null)
+            {
+                path.ResumePath();
+            }
+        }
+
+        reason = null;
+        return true;
+    }
+
+    /// <summary>Take the rope off every piton securing it, so it doesn't stretch back to where she was.</summary>
+    private static void UnclipRope(ClimbingV2PawnController climbing)
+    {
+        var harness = climbing == null ? null : climbing.harness;
+        var lifeline = harness == null ? null : harness.Lifeline;
+        if (lifeline == null)
+        {
+            return;
+        }
+
+        // The warp loops until none is left; the cap only guards against a piton that won't let go.
+        for (var i = 0; i < 64; i++)
+        {
+            var piton = lifeline.GetLastSecuringPiton();
+            if (piton is null)
+            {
+                return;
+            }
+
+            // Unity's != is false for a piton whose object is already gone; that one is only removed.
+            if (piton != null)
+            {
+                lifeline.DetachPiton(piton);
+            }
+            else
+            {
+                lifeline.RemovePiton(piton);
+            }
+        }
     }
 
     private static readonly SurvivalStat[] SurvivalStats =
@@ -1086,36 +1281,6 @@ internal static class GameApi
         }
 
         return string.Join(", ", parts);
-    }
-
-    private static bool TryDirectTeleport(Vector3 position, Quaternion rotation, out string reason)
-    {
-        var switcher = Switcher;
-        if (switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking)
-        {
-            reason = $"Ava must be on her feet to teleport here (currently {switcher.CurrentMode}).";
-            return false;
-        }
-
-        try
-        {
-            switcher.TransitionToMode(
-                PawnControllerSwitcher.Mode.Walking,
-                new Il2CppSystem.Nullable<Vector3>(position),
-                new Il2CppSystem.Nullable<Quaternion>(rotation),
-                true,
-                PawnControllerSwitcher.Context.None,
-                true);
-        }
-        catch (Exception e)
-        {
-            MelonLogger.Error($"Teleport failed: {e}");
-            reason = "The game refused the teleport (see log).";
-            return false;
-        }
-
-        reason = null;
-        return true;
     }
 
     /// <summary>
