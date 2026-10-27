@@ -140,6 +140,11 @@ internal static class ModControls
     public static readonly Control Undo = new("Undo", ControlSection.RouteEditor, ControlModes.None, "Undo (with Ctrl)", "<Keyboard>/z", "<Gamepad>/select", "Undo");
     public static readonly Control Save = new("Save", ControlSection.RouteEditor, ControlModes.None, "Save (with Ctrl)", "<Keyboard>/s", "<Gamepad>/dpad/right", "Save");
 
+    // Only read in the level select and free-climb menus, where nothing else uses E or Y, so it's
+    // left out of the clash checks: E is also Move up and Y also Set start.
+    public static readonly Control EditRoute = new("EditRoute", ControlSection.RouteEditor, ControlModes.None,
+        "Edit route (in route menus)", "<Keyboard>/e", "<Gamepad>/buttonNorth");
+
     /// <summary>Every control, in the order the remap screen lists them.</summary>
     public static readonly IReadOnlyList<Control> All = new[]
     {
@@ -147,6 +152,7 @@ internal static class ModControls
         Teleport, PlayTest, LevelSelect, Exit, ToggleFreecam,
         OpenEditor, GoToStart, ShowRoute, Paint, CycleBrush, AllowBrush, DenyBrush, EraseBrush,
         LineTool, BrushBigger, BrushSmaller, SetStart, SetFinish, ShowLine, DeletePoint, LineColor, NewLine, Undo, Save,
+        EditRoute,
     };
 
     private static string _savePath;

@@ -98,6 +98,12 @@ public sealed class Route
 
     public string Name { get; set; } = "Untitled route";
 
+    /// <summary>The setter's grade, in any scale ("V3", "6b+"), or null.</summary>
+    public string Grade { get; set; }
+
+    /// <summary>A line or two about the route, or null.</summary>
+    public string Description { get; set; }
+
     /// <summary>Which world/zone the coordinates belong to, e.g. "Kami/Zone_Foo".</summary>
     public string ZoneKey { get; set; } = "";
 

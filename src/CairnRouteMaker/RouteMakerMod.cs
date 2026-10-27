@@ -169,6 +169,12 @@ public sealed class RouteMakerMod : MelonMod
 
     private void HandleHotkeys()
     {
+        // Rebound to letters, these would go off while typing a route's name.
+        if (_editor?.LevelSelect.TextEntry != null)
+        {
+            return;
+        }
+
         if (ModControls.OpenEditor.KeyPressed || EditorInput.GamepadToggleEditor())
         {
             EnsureEditor();

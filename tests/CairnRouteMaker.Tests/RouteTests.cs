@@ -91,6 +91,20 @@ public class RouteTests
     }
 
     [Fact]
+    public void RoundTripsTheGradeAndDescription()
+    {
+        var route = new Route { Name = "Roof", ZoneKey = "Kami/A", Grade = "V4", Description = "Heel hook the lip." };
+
+        var copy = RouteFile.Deserialize(RouteFile.Serialize(route));
+        var plain = RouteFile.Serialize(new Route { ZoneKey = "Kami/A" });
+
+        Assert.Equal("V4", copy.Grade);
+        Assert.Equal("Heel hook the lip.", copy.Description);
+        Assert.DoesNotContain("\"grade\"", plain);
+        Assert.DoesNotContain("\"description\"", plain);
+    }
+
+    [Fact]
     public void RoundTripsRouteLinesAndTheirGrades()
     {
         var route = new Route { ZoneKey = "Kami/A" };
@@ -106,7 +120,7 @@ public class RouteTests
         var json = RouteFile.Serialize(route);
         var copy = RouteFile.Deserialize(json);
 
-        Assert.Contains("\"formatVersion\": 5", json);
+        Assert.Contains("\"formatVersion\": 6", json);
         Assert.Contains("\"grade\": \"black\"", json);
         Assert.Equal(2, copy.Lines.Count);
         Assert.Equal(LineGrade.Blue, copy.Lines[0].Grade);
@@ -287,6 +301,27 @@ public class RouteTests
         Assert.Equal("Kami_A-4", fourth.Id);
         Assert.Equal(new[] { "Second", "Third", "Fourth" }, storage.LoadAll().ConvertAll(r => r.Name));
         Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public void DuplicateSavesACopyUnderAFreeName()
+    {
+        var dir = TempDirectory();
+        var storage = new RouteStorage(dir);
+        var route = new Route { Name = "Slab", ZoneKey = "Kami/A", Grade = "V1" };
+        route.Strokes.Add(StrokeAt(StrokeMode.Allow, new Vector3(1, 2, 3), 0.5f));
+        storage.Save(route);
+
+        var first = storage.Duplicate(route);
+        var second = storage.Duplicate(route);
+
+        Assert.Equal("Slab (copy)", first.Name);
+        Assert.Equal("Slab (copy 2)", second.Name);
+        Assert.Equal(new[] { "Kami_A", "Kami_A-2", "Kami_A-3" }, storage.LoadAll().ConvertAll(r => r.Id));
+        Assert.Equal("V1", first.Grade);
+        Assert.Equal(route.Strokes[0].Stamps[0], first.Strokes[0].Stamps[0]);
+        Assert.NotSame(route.Strokes[0], first.Strokes[0]);
+        Directory.Delete(dir, recursive: true);
     }
 
     private static string TempDirectory() => Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

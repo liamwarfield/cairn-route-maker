@@ -238,6 +238,20 @@ internal sealed class RouteEditor
     }
 
     /// <summary>
+    /// A route's name, grade or description was changed from the menu: if it's the one on show,
+    /// the editor's copy takes them too, or its next save would undo the change.
+    /// </summary>
+    public void OnRouteDetailsChanged(Route route)
+    {
+        if (IsShowing(route))
+        {
+            Route.Name = route.Name;
+            Route.Grade = route.Grade;
+            Route.Description = route.Description;
+        }
+    }
+
+    /// <summary>
     /// Switch between editing and freecam, opening in freecam if closed. Editing with no route
     /// on show starts a new one.
     /// </summary>
@@ -804,9 +818,20 @@ internal sealed class RouteEditor
     private void UpdateLevelSelect()
     {
         LevelSelectView.Show(LevelSelect, Input);
+        if (LevelSelect.UpdateTextEntry())
+        {
+            return;
+        }
+
         if (Input.MenuBack)
         {
             LevelSelect.Back();
+            return;
+        }
+
+        if (Input.MenuEdit)
+        {
+            LevelSelect.Edit();
             return;
         }
 
