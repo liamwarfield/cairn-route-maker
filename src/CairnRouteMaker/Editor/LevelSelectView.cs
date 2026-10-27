@@ -77,6 +77,7 @@ internal static class LevelSelectView
     private static int _shownPage = -1;
     private static int _shownFrame = -1;
     private static (bool Gamepad, int Version, bool Typing, bool Editable)? _shownHints;
+    private static string _shownDescription;
     private static float _scroll;
     private static float _arrowY;
     private static int _bouncedFor = -1;
@@ -140,6 +141,7 @@ internal static class LevelSelectView
         }
 
         ShowHints(menu, input.UsingGamepad);
+        ShowDescription(menu);
         HandlePointer(menu, input);
         Animate(menu);
         ShowTextEntry(menu.TextEntry, input.UsingGamepad);
@@ -152,6 +154,17 @@ internal static class LevelSelectView
         {
             _root.SetActive(false);
             _shownMenu = null;
+        }
+    }
+
+    /// <summary>The line under the title: the highlighted entry's detail if it has one, such as a route's description, or else the page's.</summary>
+    private static void ShowDescription(LevelSelect menu)
+    {
+        var description = menu.Current?.Detail ?? menu.Description;
+        if (description != _shownDescription)
+        {
+            _shownDescription = description;
+            SetText(_description, description, _style.FontSize * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
         }
     }
 
@@ -372,7 +385,8 @@ internal static class LevelSelectView
         var size = _style.FontSize;
         SetText(_breadcrumb, menu.Breadcrumb, size * 0.5f, WithAlpha(_style.NotSelected, 0.6f));
         SetText(_title, menu.Title, size * 1.6f, _style.Selected);
-        SetText(_description, menu.Description, size * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
+        _shownDescription = null;
+        SetText(_description, null, size * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
         SetText(_hints, _hints.text, size * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
         Style(_field, size);
         _field.fontSizeMax = size;
@@ -546,8 +560,10 @@ internal static class LevelSelectView
         _title.alignment = TextAlignmentOptions.MidlineLeft;
 
         _description = NewText("Description", _root.transform);
-        Place(_description.rectTransform, Left, 268f, ListWidth, 40f);
+        // Two lines, for a route's description; the list starts below them.
+        Place(_description.rectTransform, Left, 268f, ListWidth, 76f);
         _description.alignment = TextAlignmentOptions.TopLeft;
+        _description.textWrappingMode = TextWrappingModes.Normal;
 
         _hints = NewText("Hints", _root.transform);
         Place(_hints.rectTransform, Left, ReferenceHeight - 80f, ListWidth, 40f);

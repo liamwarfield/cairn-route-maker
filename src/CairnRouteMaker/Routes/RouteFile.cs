@@ -16,7 +16,7 @@ public static class RouteFile
 {
     /// <summary>
     /// 2 added erase strokes, 3 the finish, 4 a route line, 5 several lines with colours, 6 a
-    /// grade and description; older files read unchanged (a version 4 line becomes one green line).
+    /// description; older files read unchanged (a version 4 line becomes one green line).
     /// </summary>
     public const int FormatVersion = 6;
 
@@ -34,7 +34,6 @@ public static class RouteFile
         {
             FormatVersion = FormatVersion,
             Name = route.Name,
-            Grade = route.Grade,
             Description = route.Description,
             ZoneKey = route.ZoneKey,
             GameVersion = route.GameVersion,
@@ -81,7 +80,6 @@ public static class RouteFile
         var route = new Route
         {
             Name = dto.Name ?? "Untitled route",
-            Grade = dto.Grade,
             Description = dto.Description,
             ZoneKey = dto.ZoneKey ?? "",
             GameVersion = dto.GameVersion ?? "",
@@ -151,7 +149,6 @@ public static class RouteFile
     {
         public int FormatVersion { get; set; }
         public string Name { get; set; }
-        public string Grade { get; set; }
         public string Description { get; set; }
         public string ZoneKey { get; set; }
         public string GameVersion { get; set; }

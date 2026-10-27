@@ -238,7 +238,7 @@ internal sealed class RouteEditor
     }
 
     /// <summary>
-    /// A route's name, grade or description was changed from the menu: if it's the one on show,
+    /// A route's name or description was changed from the menu: if it's the one on show,
     /// the editor's copy takes them too, or its next save would undo the change.
     /// </summary>
     public void OnRouteDetailsChanged(Route route)
@@ -246,7 +246,6 @@ internal sealed class RouteEditor
         if (IsShowing(route))
         {
             Route.Name = route.Name;
-            Route.Grade = route.Grade;
             Route.Description = route.Description;
         }
     }

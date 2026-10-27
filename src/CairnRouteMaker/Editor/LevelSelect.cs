@@ -24,7 +24,7 @@ internal sealed class LevelSelect
     public sealed class Entry
     {
         public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null,
-            IReadOnlyList<Color32> swatches = null, Action edit = null)
+            IReadOnlyList<Color32> swatches = null, Action edit = null, string detail = null)
         {
             Label = label;
             IsHeader = isHeader;
@@ -34,6 +34,7 @@ internal sealed class LevelSelect
             Note = note;
             Swatches = swatches;
             Edit = edit;
+            Detail = detail;
         }
 
         public string Label { get; }
@@ -52,6 +53,9 @@ internal sealed class LevelSelect
 
         /// <summary>What the Edit route button does on this entry, or null: route entries open the route's Edit Route page.</summary>
         public Action Edit { get; }
+
+        /// <summary>Shown in place of the page's description while this entry is highlighted, e.g. a route's description; or null.</summary>
+        public string Detail { get; }
     }
 
     /// <summary>Where to start a free-climb game; with a route, Ava is then taken to its start.</summary>
@@ -73,9 +77,7 @@ internal sealed class LevelSelect
 
     /// <summary>Route names are cut off in the menus well before this, but it keeps them to one line.</summary>
     private const int MaxNameLength = 40;
-    private const int MaxGradeLength = 12;
-
-    /// <summary>One line; the text box shrinks its font to fit.</summary>
+    /// <summary>One line as typed; the text box shrinks its font to fit. It fits in two lines under the title.</summary>
     private const int MaxDescriptionLength = 100;
 
     private readonly List<Entry> _entries = new();
@@ -310,8 +312,8 @@ internal sealed class LevelSelect
     /// <summary>A route to switch to: choosing it shows it and takes Ava to its start. <paramref name="page"/> is the page it's on.</summary>
     private Entry RouteEntry(Route route, Action page) =>
         new(route.Name, false, TryParseZone(route.ZoneKey, out _, out _), () => Climb(route), leavesEditor: true,
-            note: Notes(_editor.IsShowing(route) ? "showing" : null, route.Grade, route.Start == null ? "no start set" : null, route.Description),
-            edit: EditAction(route, page));
+            note: Notes(_editor.IsShowing(route) ? "showing" : null, route.Start == null ? "no start set" : null),
+            edit: EditAction(route, page), detail: route.Description);
 
     private void ShowLaunch()
     {
@@ -372,8 +374,8 @@ internal sealed class LevelSelect
         Add(Header("Routes"));
         AddRoutes(_storage.LoadAll(), $"{world}/{name}", route =>
             new Entry(route.Name, false, true, () => _launch(new LaunchTarget(world, name, first, route)), leavesEditor: true,
-                note: Notes(route.Grade, route.Start == null ? "no start set" : null, route.Description),
-                edit: EditAction(route, () => ShowLaunchZone(world, zone))));
+                note: route.Start == null ? "no start set" : null,
+                edit: EditAction(route, () => ShowLaunchZone(world, zone)), detail: route.Description));
 
         Add(Header("Without a route"));
         if (zone.Spawners.Count == 1)
@@ -421,7 +423,8 @@ internal sealed class LevelSelect
             }
 
             Add(new Entry(route.Name, false, true, () => Push(ShowRoutes, () => ShowRouteActions(route)),
-                note: Notes(_editor.IsShowing(route) ? "showing" : null, route.Grade, Summary(route)), edit: EditAction(route, ShowRoutes)));
+                note: Notes(_editor.IsShowing(route) ? "showing" : null, Summary(route)), edit: EditAction(route, ShowRoutes),
+                detail: route.Description));
         }
 
         End();
@@ -472,12 +475,9 @@ internal sealed class LevelSelect
         Action page = () => ShowEditRoute(route);
         Add(new Entry("Rename", false, true, () => Push(page, () => ShowTextField(route, "Rename Route", "Type a new name for this route.",
             route.Name, MaxNameLength, name => Rename(route, name)))));
-        Add(new Entry("Grade", false, true, () => Push(page, () => ShowTextField(route, "Grade", "In any scale: V3, 6b+, 5.10a. Leave it empty for none.",
-            route.Grade, MaxGradeLength, grade => SetDetail(route, grade, r => r.Grade, (r, value) => r.Grade = value))),
-            note: route.Grade ?? "none"));
-        Add(new Entry("Description", false, true, () => Push(page, () => ShowTextField(route, "Description", "A line about the route. Leave it empty for none.",
-            route.Description, MaxDescriptionLength, text => SetDetail(route, text, r => r.Description, (r, value) => r.Description = value))),
-            note: route.Description ?? "none"));
+        Add(new Entry("Description", false, true, () => Push(page, () => ShowTextField(route, "Description", "A line or two about the route. Leave it empty for none.",
+            route.Description, MaxDescriptionLength, text => SetDescription(route, text))),
+            note: route.Description == null ? "none" : null, detail: route.Description));
         Add(new Entry("Duplicate", false, true, () => Duplicate(route)));
         Add(new Entry("Delete", false, true, () => Push(page, () => ShowConfirmDelete(route))));
         End();
@@ -527,18 +527,18 @@ internal sealed class LevelSelect
         Back();
     }
 
-    /// <summary>Save a route's grade or description (empty for none) and go back to its Edit Route page.</summary>
-    private void SetDetail(Route route, string text, Func<Route, string> get, Action<Route, string> set)
+    /// <summary>Save a route's description (empty for none) and go back to its Edit Route page.</summary>
+    private void SetDescription(Route route, string text)
     {
         var value = text.Trim();
         value = value.Length == 0 ? null : value;
-        var old = get(route);
+        var old = route.Description;
         if (value != old)
         {
-            set(route, value);
+            route.Description = value;
             if (!TrySave(route))
             {
-                set(route, old);
+                route.Description = old;
                 return;
             }
         }

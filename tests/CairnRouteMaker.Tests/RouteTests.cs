@@ -91,16 +91,14 @@ public class RouteTests
     }
 
     [Fact]
-    public void RoundTripsTheGradeAndDescription()
+    public void RoundTripsTheDescription()
     {
-        var route = new Route { Name = "Roof", ZoneKey = "Kami/A", Grade = "V4", Description = "Heel hook the lip." };
+        var route = new Route { Name = "Roof", ZoneKey = "Kami/A", Description = "Heel hook the lip." };
 
         var copy = RouteFile.Deserialize(RouteFile.Serialize(route));
         var plain = RouteFile.Serialize(new Route { ZoneKey = "Kami/A" });
 
-        Assert.Equal("V4", copy.Grade);
         Assert.Equal("Heel hook the lip.", copy.Description);
-        Assert.DoesNotContain("\"grade\"", plain);
         Assert.DoesNotContain("\"description\"", plain);
     }
 
@@ -308,7 +306,7 @@ public class RouteTests
     {
         var dir = TempDirectory();
         var storage = new RouteStorage(dir);
-        var route = new Route { Name = "Slab", ZoneKey = "Kami/A", Grade = "V1" };
+        var route = new Route { Name = "Slab", ZoneKey = "Kami/A", Description = "Friction." };
         route.Strokes.Add(StrokeAt(StrokeMode.Allow, new Vector3(1, 2, 3), 0.5f));
         storage.Save(route);
 
@@ -318,7 +316,7 @@ public class RouteTests
         Assert.Equal("Slab (copy)", first.Name);
         Assert.Equal("Slab (copy 2)", second.Name);
         Assert.Equal(new[] { "Kami_A", "Kami_A-2", "Kami_A-3" }, storage.LoadAll().ConvertAll(r => r.Id));
-        Assert.Equal("V1", first.Grade);
+        Assert.Equal("Friction.", first.Description);
         Assert.Equal(route.Strokes[0].Stamps[0], first.Strokes[0].Stamps[0]);
         Assert.NotSame(route.Strokes[0], first.Strokes[0]);
         Directory.Delete(dir, recursive: true);
