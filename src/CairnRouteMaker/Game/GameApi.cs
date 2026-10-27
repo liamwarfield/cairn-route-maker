@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Il2Cpp;
 using Il2CppTheGameBakers.Cairn;
@@ -941,72 +942,440 @@ internal static class GameApi
     }
 
     /// <summary>
-    /// Put Ava at a position using the game's own free-roam warp (what its map uses): it shows a
-    /// loading screen, takes her off the wall, unclips the rope from the last piton, brings the
-    /// Climbot along and respawns her if needed. A bare TransitionToMode skips all that and can
-    /// leave her T-posed, so it's only the fallback when the warp isn't there.
-    /// The warp also puts on or takes off her ice gear as its warp point says, so our point keeps
-    /// whatever she has now.
+    /// Where and how to put Ava for a point picked on the rock: <see cref="Mode"/> is Walking for
+    /// ground she can stand on and Climbing for a wall, with <see cref="Position"/> moved off the
+    /// rock and <see cref="Rotation"/> facing it.
     /// </summary>
-    public static bool TryTeleportAva(Vector3 position, float yawDegrees, out string reason)
+    public readonly record struct Placement(Vector3 Position, Quaternion Rotation, PawnControllerSwitcher.Mode Mode);
+
+    /// <summary>
+    /// How far off the rock Ava's root goes on a wall: the radius of the sphere the game's fly mode
+    /// casts at the rock to find where to drop her when it puts her on a wall.
+    /// </summary>
+    private const float WallStandOff = 0.3f;
+
+    /// <summary>Rock steeper than about 45 degrees is a wall, so she starts on it rather than on her feet.</summary>
+    private const float MinGroundNormalY = 0.7f;
+
+
+    /// <summary>How close the probe has to find rock to the picked point to trust its normal.</summary>
+    private const float SurfaceProbeTolerance = 0.2f;
+
+    /// <summary>How far a hold can stick out of its wall: the probe for the wall behind it reaches this far.</summary>
+    private const float HoldDepth = 0.5f;
+
+    private const int GroundLayer = 3;
+    private const int ClimbingWallLayer = 6;
+    private const int ClimbingHoldsLayer = 12;
+
+    private static readonly Vector3[] SurfaceProbeDirections = BuildSurfaceProbeDirections();
+
+    /// <summary>
+    /// Decide how Ava should arrive at a point on the rock. Route starts only store a point and a
+    /// yaw, so the surface is probed again here; if it can't be found she arrives on her feet.
+    /// </summary>
+    public static Placement PlaceAva(Vector3 point, float yawDegrees)
     {
-        if (!CanMoveAva(out reason))
+        if (!TryProbeSurface(point, SurfaceMask, SurfaceProbeTolerance, out var hit))
         {
-            return false;
+            MelonLogger.Msg($"No rock found at {point}; Ava arrives on her feet.");
+            return Standing(point, yawDegrees);
         }
 
-        var rotation = Quaternion.Euler(0f, yawDegrees, 0f);
-        var freeRoam = FreeRoamManager.Instance;
-        if (freeRoam != null)
-        {
-            // Kept inactive so the point never runs Awake and joins the game's own warp list.
-            var go = new GameObject("CairnRouteMaker warp point");
-            go.SetActive(false);
-            go.transform.SetPositionAndRotation(position, rotation);
-            var point = go.AddComponent<FreeRoamWarpPoint>();
-            point.warpMode = PawnControllerSwitcher.Mode.Walking;
-            point.setIceEquipment = ShouldWearIceGear;
-            try
-            {
-                freeRoam.WarpToPoint(point, (Disk.IOOperationCallback)new Action<bool>(_ => Object.Destroy(go)));
-                return true;
-            }
-            catch (Exception e)
-            {
-                MelonLogger.Warning($"Free-roam warp failed, falling back to a direct teleport: {e.Message}");
-                Object.Destroy(go);
-            }
-        }
-        else
-        {
-            MelonLogger.Warning("No FreeRoamManager in this game mode; using a direct teleport.");
-        }
-
-        return TryDirectTeleport(position, rotation, out reason);
+        return PlaceAva(point, hit, yawDegrees);
     }
 
     /// <summary>
-    /// Move Ava without the warp's loading screen, for short hops: a bare TransitionToMode, used
-    /// only when she's on her feet and the target is in the zone that's already loaded. Anything
-    /// else (climbing, another zone) goes through <see cref="TryTeleportAva"/> and its loading screen.
+    /// Decide how Ava should arrive at <paramref name="point"/>, given the rock there (a raycast
+    /// hit on <see cref="SurfaceMask"/>, which is how the freecam picks it). Only ClimbingWall is
+    /// climbed: steep Ground is somewhere she walks or slides, and a hold's own faces say nothing
+    /// about the slope of the wall it's on, so that's looked up behind it.
     /// </summary>
-    public static bool TryQuickTeleportAva(Vector3 position, float yawDegrees, out string reason)
+    public static Placement PlaceAva(Vector3 point, RaycastHit hit, float yawDegrees)
+    {
+        var layer = hit.collider == null ? GroundLayer : hit.collider.gameObject.layer;
+        if (layer == ClimbingHoldsLayer)
+        {
+            if (!TryProbeSurface(point, 1 << ClimbingWallLayer, HoldDepth, out hit))
+            {
+                MelonLogger.Msg($"No wall behind the hold at {point}; Ava arrives on her feet.");
+                return Standing(point, yawDegrees);
+            }
+
+            layer = ClimbingWallLayer;
+        }
+
+        var normal = hit.normal;
+        if (layer != ClimbingWallLayer || normal.y >= MinGroundNormalY)
+        {
+            return Standing(point, yawDegrees);
+        }
+
+        // Face into the rock, upright, the way fly mode drops her. Under a roof there's no
+        // horizontal direction to face, so keep the yaw she was given.
+        var facing = new Vector3(-normal.x, 0f, -normal.z);
+        var rotation = facing.sqrMagnitude > 0.01f ? Quaternion.LookRotation(facing.normalized, Vector3.up) : Quaternion.Euler(0f, yawDegrees, 0f);
+        return new Placement(hit.point + normal * WallStandOff, rotation, PawnControllerSwitcher.Mode.Climbing);
+    }
+
+    private static Placement Standing(Vector3 point, float yawDegrees) =>
+        new(point, Quaternion.Euler(0f, yawDegrees, 0f), PawnControllerSwitcher.Mode.Walking);
+
+    /// <summary>
+    /// The rock surface nearest <paramref name="point"/>, within <paramref name="tolerance"/>: cast
+    /// at it from all round and keep the closest hit. Every hit along each ray counts, so rock
+    /// nearer a ray's start (the other side of a crack) doesn't hide it. Rays starting inside the
+    /// rock pass out through its back faces without hitting them.
+    /// </summary>
+    private static bool TryProbeSurface(Vector3 point, int mask, float tolerance, out RaycastHit best)
+    {
+        const float reach = 1f;
+        var bestDistance = tolerance * tolerance;
+        best = default;
+        var found = false;
+        foreach (var direction in SurfaceProbeDirections)
+        {
+            var hits = Physics.RaycastAll(point + direction * reach, -direction, reach * 1.5f, mask, QueryTriggerInteraction.Ignore);
+            for (var i = 0; i < hits.Length; i++)
+            {
+                var distance = (hits[i].point - point).sqrMagnitude;
+                if (distance <= bestDistance)
+                {
+                    bestDistance = distance;
+                    best = hits[i];
+                    found = true;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>The 26 directions to the faces, edges and corners of a cube around the point.</summary>
+    private static Vector3[] BuildSurfaceProbeDirections()
+    {
+        var directions = new List<Vector3>();
+        for (var x = -1; x <= 1; x++)
+        {
+            for (var y = -1; y <= 1; y++)
+            {
+                for (var z = -1; z <= 1; z++)
+                {
+                    if (x != 0 || y != 0 || z != 0)
+                    {
+                        directions.Add(new Vector3(x, y, z).normalized);
+                    }
+                }
+            }
+        }
+
+        return directions.ToArray();
+    }
+
+    /// <summary>
+    /// Put Ava at a point on the rock using the game's own free-roam warp (what its map uses): it
+    /// shows a loading screen, takes her off the wall, unclips the rope from the last piton, stows
+    /// ice tools, brings the Climbot along and respawns her if needed. On a wall the warp puts her
+    /// straight into climbing, the same way the map's wall warp points do.
+    /// </summary>
+    public static bool TryTeleportAva(Vector3 point, float yawDegrees, out string reason)
     {
         if (!CanMoveAva(out reason))
         {
             return false;
         }
 
-        var streaming = StreamingManager.Instance;
-        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(position);
-        var sameZone = targetZone != null && streaming.CurrentZone != null && targetZone.name == streaming.CurrentZone.name;
-        if (Switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking || !sameZone)
+        var placement = PlaceAva(point, yawDegrees);
+        return TryWarp(placement) || TryHop(placement, out reason);
+    }
+
+    /// <summary>
+    /// Move Ava to the rock the freecam is pointing at, within the zone that's already loaded,
+    /// with no loading screen and no save (see <see cref="TryHop"/>). Another zone, or a game
+    /// that's over, goes through the warp as <see cref="TryTeleportAva"/> does.
+    /// </summary>
+    public static bool TryQuickTeleportAva(RaycastHit hit, float yawDegrees, out string reason)
+    {
+        if (!CanMoveAva(out reason))
         {
-            MelonLogger.Msg($"Quick teleport not possible ({Switcher.CurrentMode}, target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
-            return TryTeleportAva(position, yawDegrees, out reason);
+            return false;
         }
 
-        return TryDirectTeleport(position, Quaternion.Euler(0f, yawDegrees, 0f), out reason);
+        var placement = PlaceAva(hit.point, hit, yawDegrees);
+        var streaming = StreamingManager.Instance;
+        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(hit.point);
+        var sameZone = targetZone != null && streaming.CurrentZone != null && targetZone.name == streaming.CurrentZone.name;
+        if (!sameZone)
+        {
+            MelonLogger.Msg($"Quick teleport not possible (target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
+        }
+        else if (IsGameOver)
+        {
+            // The warp revives her and waits for the respawn before moving her.
+            MelonLogger.Msg("Quick teleport not possible (game over); using the warp.");
+        }
+        else
+        {
+            return TryHop(placement, out reason);
+        }
+
+        return TryWarp(placement) || TryHop(placement, out reason);
+    }
+
+    /// <summary>Ava has died or passed out and the game is waiting to respawn her.</summary>
+    public static bool IsGameOver
+    {
+        get
+        {
+            var game = GlobalGameManager.Instance;
+            return game != null && game.CurrentGameState == GlobalGameManager.GameState.GameOver;
+        }
+    }
+
+    /// <summary>
+    /// Close the game-over screen once Ava has been revived. Reviving her doesn't leave the game's
+    /// GameOver state: only closing the screen does (GameOverMenu.PopGameOverState), and with it
+    /// time restarts, the death music stops and other sound comes back. The screen's own retry
+    /// warps and then closes it; its map's "fast travel" and the mod's warp have to do it here.
+    /// </summary>
+    public static void CloseGameOverMenu()
+    {
+        try
+        {
+            if (!TryCloseGameOverMenu())
+            {
+                MelonCoroutines.Start(CloseGameOverMenuWhenOpened());
+            }
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Error($"Failed closing the game-over screen: {e}");
+        }
+    }
+
+    /// <summary>
+    /// Undo what dying did to the sound when the game carries on without loading a level (see
+    /// GameOverPatches): clear SoundManager.BackToMainMenu, put the sound engine's game state back
+    /// to in-game (what SoundManager does on returning to the game when the flag is clear), and
+    /// start the zone's music again (what MusicManager does when a game starts).
+    /// </summary>
+    public static void RestoreInGameSound()
+    {
+        var sound = SoundManager.Instance;
+        if (sound != null)
+        {
+            var wasLeaving = sound.BackToMainMenu;
+            sound.BackToMainMenu = false;
+            sound.SetState(Il2CppAK.STATES.STATE_GAME.GROUP, Il2CppAK.STATES.STATE_GAME.STATE.INGAME);
+            MelonLogger.Msg($"Restored in-game sound (sound manager was {(wasLeaving ? "" : "not ")}flagged as leaving, paused={sound.IsPaused}).");
+        }
+
+        var music = Il2CppTheGameBakers.Cairn.Music.MusicManager.Instance;
+        if (music != null)
+        {
+            music.SetMusic(Il2CppAK.STATES.STATE_MUSIC.STATE.NONE, false);
+        }
+    }
+
+    private static bool TryCloseGameOverMenu()
+    {
+        var menu = Object.FindObjectOfType<GameOverMenu>();
+        if (menu == null || !menu.IsOpened)
+        {
+            return false;
+        }
+
+        menu.Close(false);
+        MelonLogger.Msg(IsGameOver ? "Closed the game-over screen, but the game is still over." : "Closed the game-over screen.");
+        return true;
+    }
+
+    /// <summary>The screen can't close while it's still fading in, so wait for it. Time is stopped, so this counts real time.</summary>
+    private static IEnumerator CloseGameOverMenuWhenOpened()
+    {
+        var giveUp = Time.unscaledTime + 5f;
+        while (Time.unscaledTime < giveUp)
+        {
+            yield return null;
+            if (!IsGameOver)
+            {
+                yield break;
+            }
+
+            bool closed;
+            try
+            {
+                closed = TryCloseGameOverMenu();
+            }
+            catch (Exception e)
+            {
+                MelonLogger.Error($"Failed closing the game-over screen: {e}");
+                yield break;
+            }
+
+            if (closed)
+            {
+                yield break;
+            }
+        }
+
+        MelonLogger.Warning("The game-over screen never finished opening; the game may stay over (no sound, death music).");
+    }
+
+    private static bool TryWarp(Placement placement)
+    {
+        var freeRoam = FreeRoamManager.Instance;
+        if (freeRoam == null)
+        {
+            MelonLogger.Warning("No FreeRoamManager in this game mode; teleporting without the warp.");
+            return false;
+        }
+
+        // Kept inactive so the point never runs Awake and joins the game's own warp list. The
+        // warp ignores the point's rotation; on a wall the climbing controller turns her to face
+        // the rock itself when it sets her up.
+        var go = new GameObject("CairnRouteMaker warp point");
+        go.SetActive(false);
+        go.transform.SetPositionAndRotation(placement.Position, placement.Rotation);
+        var warpPoint = go.AddComponent<FreeRoamWarpPoint>();
+        warpPoint.warpMode = placement.Mode;
+
+        // The warp takes the ice gear off unless the point says to wear it, and sets the game's
+        // "wear ice gear" flag to match. Free climb hands it out, so keep whatever she has.
+        warpPoint.setIceEquipment = ShouldWearIceGear;
+        var reviving = IsGameOver;
+        try
+        {
+            MelonLogger.Msg($"Warping Ava to {placement.Position} ({placement.Mode}).");
+            freeRoam.WarpToPoint(warpPoint, (Disk.IOOperationCallback)new Action<bool>(_ => Object.Destroy(go)));
+            if (reviving)
+            {
+                // The warp has revived her by now; as the game's own retry does, close the screen after.
+                CloseGameOverMenu();
+            }
+
+            return true;
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Warning($"Free-roam warp failed: {e.Message}");
+            Object.Destroy(go);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The steps of the warp's own routine (FreeRoamManager.WarpRoutine) without the loading screen
+    /// around it or the save it ends with, which shows the auto-save icon. Unlike the routine it
+    /// passes the rotation on, so on a wall she starts out facing the rock, as fly mode drops her.
+    /// </summary>
+    private static bool TryHop(Placement placement, out string reason)
+    {
+        var revived = false;
+        var switcher = Switcher;
+        var climbing = switcher.climbingPawnController;
+        var path = switcher.PathRecorder;
+        try
+        {
+            MelonLogger.Msg($"Moving Ava to {placement.Position} ({placement.Mode}).");
+
+            // The warp's first step: after a fall that ends the game she has to be brought back
+            // before she can be moved.
+            if (IsGameOver && PawnManager.Instance != null)
+            {
+                MelonLogger.Msg("Reviving Ava first.");
+                PawnManager.Instance.Respawn(PawnManager.RespawnMode.Revive, null);
+                revived = true;
+            }
+
+            if (path != null)
+            {
+                path.HaltPath();
+            }
+
+            // As the warp does: re-equip the ice gear she's meant to wear, or put it away. Putting it
+            // away also stops her limbs using it afterwards.
+            var pawns = PawnManager.Instance;
+            if (pawns != null)
+            {
+                if (ShouldWearIceGear)
+                {
+                    pawns.EquipAllIceClimbigDevices(true, false);
+                }
+                else
+                {
+                    pawns.UnEquipAllIceClimbingDevices(true, true, true);
+                }
+            }
+
+            switcher.TransitionToMode(
+                placement.Mode,
+                new Il2CppSystem.Nullable<Vector3>(placement.Position),
+                new Il2CppSystem.Nullable<Quaternion>(placement.Rotation),
+                true,
+                PawnControllerSwitcher.Context.None,
+                true);
+
+            var robot = climbing == null ? null : climbing.associatedRobotPawn;
+            if (robot != null)
+            {
+                robot.TeleportNearClimber(true, true);
+            }
+
+            UnclipRope(climbing);
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Error($"Teleport failed: {e}");
+            reason = "The game refused the teleport (see log).";
+            return false;
+        }
+        finally
+        {
+            if (path != null)
+            {
+                path.ResumePath();
+            }
+
+            if (revived)
+            {
+                CloseGameOverMenu();
+            }
+        }
+
+        reason = null;
+        return true;
+    }
+
+    /// <summary>Take the rope off every piton securing it, so it doesn't stretch back to where she was.</summary>
+    private static void UnclipRope(ClimbingV2PawnController climbing)
+    {
+        var harness = climbing == null ? null : climbing.harness;
+        var lifeline = harness == null ? null : harness.Lifeline;
+        if (lifeline == null)
+        {
+            return;
+        }
+
+        // The warp loops until none is left; the cap only guards against a piton that won't let go.
+        for (var i = 0; i < 64; i++)
+        {
+            var piton = lifeline.GetLastSecuringPiton();
+            if (piton is null)
+            {
+                return;
+            }
+
+            // Unity's != is false for a piton whose object is already gone; that one is only removed.
+            if (piton != null)
+            {
+                lifeline.DetachPiton(piton);
+            }
+            else
+            {
+                lifeline.RemovePiton(piton);
+            }
+        }
     }
 
     private static readonly SurvivalStat[] SurvivalStats =
@@ -1086,36 +1455,6 @@ internal static class GameApi
         }
 
         return string.Join(", ", parts);
-    }
-
-    private static bool TryDirectTeleport(Vector3 position, Quaternion rotation, out string reason)
-    {
-        var switcher = Switcher;
-        if (switcher.CurrentMode != PawnControllerSwitcher.Mode.Walking)
-        {
-            reason = $"Ava must be on her feet to teleport here (currently {switcher.CurrentMode}).";
-            return false;
-        }
-
-        try
-        {
-            switcher.TransitionToMode(
-                PawnControllerSwitcher.Mode.Walking,
-                new Il2CppSystem.Nullable<Vector3>(position),
-                new Il2CppSystem.Nullable<Quaternion>(rotation),
-                true,
-                PawnControllerSwitcher.Context.None,
-                true);
-        }
-        catch (Exception e)
-        {
-            MelonLogger.Error($"Teleport failed: {e}");
-            reason = "The game refused the teleport (see log).";
-            return false;
-        }
-
-        reason = null;
-        return true;
     }
 
     /// <summary>

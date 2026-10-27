@@ -24,16 +24,30 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
 - Game API: `PawnControllerSwitcher.TransitionToMode(Mode, Vector3? pos, Quaternion? rot, bool force, Context ctx, bool checkShouldHover)`. **sig**
   - It has 52 native callers, including `NetplaySpawn.TeleportLocalPlayerTo`, `SpawnerMC.TeleportTo` and `FreeRoamManager.WarpRoutine`. **xref**
   - With `checkShouldHover: true`, Ava hovers until the target zone has streamed in. **xref**; whether that works for far targets is a **guess** until tested at runtime.
-  - Passing `Mode.Climbing` may place her straight onto a wall, which would give us wall starts later. **guess**
+  - Passing `Mode.Climbing` puts her straight onto a wall (**xref**; the mod uses it for wall starts):
+    1. `TransitionToMode` sets the root position, and the rotation only if one is given, then switches mode.
+    2. `ClimbingV2PawnController.ResetClimber(ClimbingStartMode.Default)` runs `ResetLimbs` and `HoldsSetUtility.Refresh` / `ApplyImmediate`, which grab holds at once. Then `UpdateClosestWallPointPosAndNormal` and `UpdateTransformForward` turn her to face the rock.
+  - **Fly mode's "go to climb"** is the game's own dev tool for this (`PawnControllerFlyMode.Update` / `GoToState`, **xref**):
+    1. It runs `Physics.SphereCast` from the fly pawn along its forward: radius 0.3, 50 m, `Helpers.ClimbingWallAndGroundLayerMask`.
+    2. `RaycastHitExtensions.GetCapsulePoleForHitPosition(hit, origin, dir)` (in `Il2CppTheGameBakers.Cairn.Utilities`) gives the sphere's centre at impact, 0.3 m off the rock. It becomes `offStateParameters.position`.
+    3. On exit it moves her root there, keeping a yaw-only rotation, and calls `TransitionToMode(Climbing, null, null, false, None, true)`.
+  - The game's debug commands `ClimberMemorySaveDC` / `ClimberMemoryRestoreDC` and the climb snapshots (`SceneSnapshotClimbData`: a hold id per limb) restore an exact saved grip. They can't place her at an arbitrary point.
+  - **Wall or ground (the mod's rule):**
+    - She climbs only where the rock under the point is on the ClimbingWall layer and steeper than about 45° (normal y < 0.7).
+    - Ground is always walked, however steep.
+    - A hold (ClimbingHolds) is judged by the ClimbingWall surface within 0.5 m of it, since a jug's top faces up even on a vertical wall.
+    - The freecam passes its raycast hit. Route starts store only a point, so the mod finds the surface again by casting at the point from 26 directions (`Physics.RaycastAll`, so the far side of a crack doesn't hide it). If nothing is found within 0.2 m, it logs that and she arrives on her feet.
 - Full sequence in `FreeRoamManager.WarpRoutine` (**xref**):
-  1. Wait while `CairnSceneManager.IsBusy()`.
-  2. `PathRecorder.HaltPath()`.
-  3. Equip or unequip ice gear as the warp point says (see "Ice gear").
-  4. `TransitionToMode`.
-  5. `RobotPawnController.TeleportNearClimber`.
-  6. Clean up pitons via `Lifeline`.
-  7. `PathRecorder.ResumePath()`.
-  8. Save.
+  1. If `GlobalGameManager.Instance.CurrentGameState == GameOver`, `PawnManager.Respawn(RespawnMode.Revive)`.
+  2. Wait while `CairnSceneManager.IsBusy()`.
+  3. `PathRecorder.HaltPath()`.
+  4. Equip or unequip ice gear as the warp point says (see "Ice gear").
+  5. `TransitionToMode`.
+  6. `RobotPawnController.TeleportNearClimber`.
+  7. Clean up pitons via `Lifeline`.
+  8. Wait a frame, then while the scene manager is busy or Ava is hovering.
+  9. `PathRecorder.ResumePath()`.
+  10. Save.
 - CairnMP's approach (**mp**):
   1. Teleport only while Walking.
   2. If the target is in another zone (`StreamingManager.Instance.GetBestZoneAt(pos)` differs from `CurrentZone`), call `CairnSceneManager.Instance.TravelToZone`, then wait for loading to finish.
@@ -174,16 +188,36 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
 ## Warping and camera streaming
 
 - **Safe teleport:** `FreeRoamManager.Instance.WarpToPoint(FreeRoamWarpPoint wp, Disk.IOOperationCallback onDone)`. This is the game's map warp. It shows a loading screen, then `WarpRoutine` runs (**xref**):
-  1. Wait for `CairnSceneManager.IsBusy()` to clear.
-  2. `PathRecorder.HaltPath()`.
-  3. Put on or take off ice gear as the warp point's `setIceEquipment` says.
-  4. `TransitionToMode(wp.WarpMode, wp.TeleportDestination, ...)`.
-  5. `RobotPawnController.TeleportNearClimber`.
-  6. Detach and remove the last securing piton from the `Lifeline`.
-  7. `PawnManager.Respawn` when needed.
+  1. Revive Ava with `PawnManager.Respawn(RespawnMode.Revive)` if the game is over.
+  2. Wait for `CairnSceneManager.IsBusy()` to clear.
+  3. `PathRecorder.HaltPath()`.
+  4. Put on or take off ice gear as the warp point's `setIceEquipment` says.
+  5. `TransitionToMode(wp.WarpMode, wp.TeleportDestination, ...)`.
+  6. `RobotPawnController.TeleportNearClimber`.
+  7. Detach and remove the last securing piton from the `Lifeline`.
   8. `ResumePath()`, then save.
 
+  `WarpToPoint` is `CairnSceneManager.ShowLoadingScreen`, then `WarpRoutine` (public), then `HideLoadingScreen`. The routine always ends with `SavegameManager.Save`, which shows the auto-save icon. Its other steps can be called directly, which is what the mod does for hops within the loaded zone:
+  - `switcher.PathRecorder.HaltPath()` / `ResumePath()`.
+  - `PawnManager.UnEquipAllIceClimbingDevices(true, true, true)`, or `EquipAllIceClimbigDevices(true, false)` when the point has `setIceEquipment` (see Ice gear above).
+  - `climbingPawnController.associatedRobotPawn.TeleportNearClimber(true, true)`.
+  - The revive. A hop is never made while the game is over: the freecam uses the warp then, so the routine's wait after the revive applies. The revive is only called directly when there's no `FreeRoamManager`.
+  - Loop over `climbingPawnController.harness.Lifeline.GetLastSecuringPiton()`: `DetachPiton` if the piton's object is alive, `RemovePiton` otherwise.
+
+  The warp passes the point's position but no rotation (`TransitionToMode(wp.warpMode, pos, null, true, None, true)`), so with `warpMode = Climbing` the climbing reset decides which way she faces.
+
   A bare `TransitionToMode` skips these steps. In testing it sometimes left Ava T-posed and unusable, and it does nothing useful while she's climbing.
+- **Leaving Game Over:**
+  - `GameState.GameOver` is pushed only by `GameOverMenu.OnOpening`. It is popped only by `GameOverMenu.PopGameOverState`, which runs when the menu closes (`OnClosing`, `OnDestroy`), and only if the menu was fully opened. **xref**
+  - Closing the menu also restores `Time.timeScale` and unpauses time, pops the GameOver input context, stops the death music and brings sound back. **log** (`TGBTools.*.log` next to Player.log)
+  - `PawnManager.Respawn(Revive)` only resets the pawn, stats, path recorder and Climbot. It doesn't touch the menu or the game state. **xref**
+  - The death screen's retry (`RetryFromSave`, CanWarp branch) calls `WarpToPoint` then `Close(false)` on the menu. Its map's fast travel (`EagleEyeUI.OnReloadSaveInput`) calls `WarpToPoint` and nothing else, so the game stays over: no sound, death music, time stopped. **xref**
+  - The mod closes the menu (`GameOverMenu.IsOpened`, then `Close(false)`) after its own revive warps, and after fast travel through a Harmony patch.
+  - **Sound after a warp retry:**
+    - `GameOverMenu.Retry` sets `SoundManager.BackToMainMenu`. Only `SoundManager.OnLevelLoading` clears it, and a CanWarp retry never loads a level. **xref**
+    - While it's set, `SoundManager.OnChangeGameState` doesn't put Wwise `STATE_GAME` back to `INGAME`, so it stays `GAMEOVER` and sound effects are silent. Dying runs `PawnAudioHandler.TryPostGameOver`, which posts the game-over event and sets `STATE_GAME` to `GAMEOVER`. **xref**; that the state mutes sound effects is a **guess** from the soundbank side.
+    - `MusicManager.OnChangeGameState` then stops the music. Nothing restarts it, because the zone's module is unchanged, and only `SetMusic` posts the music again (a level load does it with `SetMusic(NONE)`). **xref**
+    - In free climb the mod restores all three when the menu closes in game: it clears the flag, calls `SoundManager.SetState(STATE_GAME.GROUP, STATE_GAME.STATE.INGAME)` and `MusicManager.SetMusic(STATE_MUSIC.STATE.NONE, false)`.
 - **Warp points from code:**
   - A `FreeRoamWarpPoint` on an **inactive** GameObject works as a one-off destination. Its position and rotation come from the transform, and `warpMode` is Walking or Climbing.
   - Keep the object inactive, otherwise `Awake` registers it in the game's own warp list.
