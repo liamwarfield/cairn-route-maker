@@ -84,6 +84,7 @@ internal sealed class EditorInput
     public int MenuMove { get; private set; }
     public bool MenuConfirm { get; private set; }
     public bool MenuBack { get; private set; }
+    public bool MenuEdit { get; private set; }
     public bool MenuClick { get; private set; }
 
     /// <summary>L3+R3 on a gamepad: the controller's way to open or close the editor.</summary>
@@ -125,7 +126,7 @@ internal sealed class EditorInput
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
         DeletePoint = ClearLine = ToggleLine = CycleLineColor = NewLine = false;
         MenuMove = 0;
-        MenuConfirm = MenuBack = MenuClick = false;
+        MenuConfirm = MenuBack = MenuEdit = MenuClick = false;
 
         if (keyboard != null && mouse != null)
         {
@@ -189,6 +190,7 @@ internal sealed class EditorInput
             if (keyboard.downArrowKey.wasPressedThisFrame || ModControls.MoveBack.KeyPressed) MenuMove += 1;
             MenuConfirm |= keyboard.enterKey.wasPressedThisFrame || keyboard.spaceKey.wasPressedThisFrame;
             MenuBack |= ModControls.Exit.KeyPressed || ModControls.LevelSelect.KeyPressed;
+            MenuEdit |= ModControls.EditRoute.KeyPressed;
             MenuClick |= mouse.leftButton.wasPressedThisFrame;
             if (scroll != 0f) MenuMove += scroll > 0f ? -1 : 1;
             PointerPosition = mouse.position.ReadValue();
@@ -255,6 +257,7 @@ internal sealed class EditorInput
             if (pad.dpad.down.wasPressedThisFrame || pad.leftStick.down.wasPressedThisFrame) MenuMove += 1;
             MenuConfirm |= pad.buttonSouth.wasPressedThisFrame;
             MenuBack |= ModControls.Exit.PadPressed || ModControls.LevelSelect.PadPressed;
+            MenuEdit |= ModControls.EditRoute.PadPressed;
         }
 
         Move = move;

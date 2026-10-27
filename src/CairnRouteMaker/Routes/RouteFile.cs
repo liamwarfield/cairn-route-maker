@@ -15,10 +15,10 @@ namespace CairnRouteMaker.Routes;
 public static class RouteFile
 {
     /// <summary>
-    /// 2 added erase strokes, 3 the finish, 4 a route line, 5 several lines with colours; older
-    /// files read unchanged (a version 4 line becomes one green line).
+    /// 2 added erase strokes, 3 the finish, 4 a route line, 5 several lines with colours, 6 a
+    /// description; older files read unchanged (a version 4 line becomes one green line).
     /// </summary>
-    public const int FormatVersion = 5;
+    public const int FormatVersion = 6;
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -34,6 +34,7 @@ public static class RouteFile
         {
             FormatVersion = FormatVersion,
             Name = route.Name,
+            Description = route.Description,
             ZoneKey = route.ZoneKey,
             GameVersion = route.GameVersion,
             Start = route.Start == null
@@ -79,6 +80,7 @@ public static class RouteFile
         var route = new Route
         {
             Name = dto.Name ?? "Untitled route",
+            Description = dto.Description,
             ZoneKey = dto.ZoneKey ?? "",
             GameVersion = dto.GameVersion ?? "",
         };
@@ -147,6 +149,7 @@ public static class RouteFile
     {
         public int FormatVersion { get; set; }
         public string Name { get; set; }
+        public string Description { get; set; }
         public string ZoneKey { get; set; }
         public string GameVersion { get; set; }
         public StartDto Start { get; set; }

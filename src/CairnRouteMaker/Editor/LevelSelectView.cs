@@ -14,6 +14,8 @@ namespace CairnRouteMaker.Editor;
 /// with the bouncing arrow beside it. A soft dark gradient on the left keeps it readable over the
 /// world. It's a uGUI canvas, so it's driven from Update: call <see cref="Show"/> every frame the menu
 /// is open, and <see cref="EndFrame"/> hides it on the first frame nobody did.
+/// A page with a <see cref="TextEntry"/> shows its text in place of the list, and with a gamepad an
+/// on-screen keyboard under it.
 /// </summary>
 internal static class LevelSelectView
 {
@@ -40,6 +42,16 @@ internal static class LevelSelectView
     private const float BounceSeconds = 0.45f;
     private const float DisabledAlpha = 0.4f;
 
+    // The text box and on-screen keyboard of a page with a text entry.
+    private const float FieldHeightPerFontSize = 1.6f;
+    private const float KeyboardTop = ListTop + 140f;
+    private const float KeyWidth = 64f;
+    private const float KeyHeight = 54f;
+    private const float KeyGap = 8f;
+    private const float CaretBlinkSeconds = 0.53f;
+    private static readonly Color KeyLabelOnSelected = new(0.1f, 0.1f, 0.13f, 1f);
+    private static readonly Color ErrorColor = new(1f, 0.6f, 0.55f, 1f);
+
     private static GameObject _root;
     private static Canvas _canvas;
     private static CanvasGroup _group;
@@ -51,6 +63,11 @@ internal static class LevelSelectView
     private static TextMeshProUGUI _title;
     private static TextMeshProUGUI _description;
     private static TextMeshProUGUI _hints;
+    private static TextMeshProUGUI _field;
+    private static Image _fieldLine;
+    private static TextMeshProUGUI _fieldNote;
+    private static RectTransform _keyboard;
+    private static readonly List<KeyView> KeyViews = new();
     private static readonly List<Row> Rows = new();
     private static int _rowCount;
     private static float _contentHeight;
@@ -59,8 +76,8 @@ internal static class LevelSelectView
     private static LevelSelect _shownMenu;
     private static int _shownPage = -1;
     private static int _shownFrame = -1;
-    private static bool? _shownGamepad;
-    private static int _shownControlsVersion = -1;
+    private static (bool Gamepad, int Version, bool Typing, bool Editable)? _shownHints;
+    private static string _shownDescription;
     private static float _scroll;
     private static float _arrowY;
     private static int _bouncedFor = -1;
@@ -83,6 +100,13 @@ internal static class LevelSelectView
 
         /// <summary>0 = not selected, 1 = selected; eased between the two.</summary>
         public float Selection;
+    }
+
+    private sealed class KeyView
+    {
+        public TextEntry.Key Key;
+        public Image Background;
+        public TextMeshProUGUI Label;
     }
 
     private static float ViewportHeight => ReferenceHeight - ListTop - ListBottomMargin + Fade * 2f;
@@ -111,23 +135,16 @@ internal static class LevelSelectView
         }
 
         _canvas.scaleFactor = Screen.height / ReferenceHeight;
-        if (_shownGamepad != input.UsingGamepad || _shownControlsVersion != ModControls.Version)
-        {
-            _shownGamepad = input.UsingGamepad;
-            _shownControlsVersion = ModControls.Version;
-            var hints = input.UsingGamepad
-                ? Hint("D-pad", "Choose") + Hint("A", "Select") + Hint(ModControls.Exit.PadName, "Back")
-                : Hint("Arrows", "Choose") + Hint("Enter", "Select") + Hint(ModControls.Exit.KeyName, "Back");
-            SetText(_hints, hints, _style.FontSize * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
-        }
-
         if (menu != _shownMenu || menu.Page != _shownPage)
         {
             Rebuild(menu, input);
         }
 
+        ShowHints(menu, input.UsingGamepad);
+        ShowDescription(menu);
         HandlePointer(menu, input);
         Animate(menu);
+        ShowTextEntry(menu.TextEntry, input.UsingGamepad);
     }
 
     /// <summary>Hide the menu if <see cref="Show"/> wasn't called this frame. Call from LateUpdate.</summary>
@@ -138,6 +155,106 @@ internal static class LevelSelectView
             _root.SetActive(false);
             _shownMenu = null;
         }
+    }
+
+    /// <summary>The line under the title: the highlighted entry's detail if it has one, such as a route's description, or else the page's.</summary>
+    private static void ShowDescription(LevelSelect menu)
+    {
+        var description = menu.Current?.Detail ?? menu.Description;
+        if (description != _shownDescription)
+        {
+            _shownDescription = description;
+            SetText(_description, description, _style.FontSize * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
+        }
+    }
+
+    /// <summary>The controls line at the bottom, for the device in use and what the page can do.</summary>
+    private static void ShowHints(LevelSelect menu, bool gamepad)
+    {
+        var typing = menu.TextEntry != null;
+        var editable = !typing && menu.Current?.Edit != null;
+        var shown = (gamepad, ModControls.Version, typing, editable);
+        if (_shownHints == shown)
+        {
+            return;
+        }
+
+        _shownHints = shown;
+        string hints;
+        if (typing)
+        {
+            hints = gamepad
+                ? Hint("A", "Type") + Hint("X", "Delete") + Hint("Y", "Space") + Hint("LT", "Shift") + Hint("LB/RB", "Move cursor")
+                    + Hint("Menu", "Done") + Hint(ModControls.Exit.PadName, "Cancel")
+                : Hint("Enter", "Done") + Hint("Escape", "Cancel");
+        }
+        else
+        {
+            hints = (gamepad ? Hint("D-pad", "Choose") + Hint("A", "Select") : Hint("Arrows", "Choose") + Hint("Enter", "Select"))
+                + (editable ? Hint(gamepad ? ModControls.EditRoute.PadName : ModControls.EditRoute.KeyName, "Edit route") : "")
+                + Hint(gamepad ? ModControls.Exit.PadName : ModControls.Exit.KeyName, "Back");
+        }
+
+        SetText(_hints, hints, _style.FontSize * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
+    }
+
+    /// <summary>The page's text with its caret and how long it is, and the on-screen keyboard with a gamepad.</summary>
+    private static void ShowTextEntry(TextEntry entry, bool gamepad)
+    {
+        var typing = entry != null;
+        _field.gameObject.SetActive(typing);
+        _fieldLine.gameObject.SetActive(typing);
+        _fieldNote.gameObject.SetActive(typing);
+        _keyboard.gameObject.SetActive(typing && gamepad);
+        if (!typing)
+        {
+            return;
+        }
+
+        SetIfChanged(_field, FieldText(entry), _style.Selected);
+        _fieldLine.color = WithAlpha(_style.Selected, 0.5f);
+        SetIfChanged(_fieldNote, entry.Error ?? $"{entry.Text.Length}/{entry.MaxLength}",
+            entry.Error != null ? ErrorColor : WithAlpha(_style.NotSelected, 0.6f));
+        if (!gamepad)
+        {
+            return;
+        }
+
+        var highlighted = entry.Highlighted;
+        foreach (var view in KeyViews)
+        {
+            var selected = view.Key == highlighted;
+            var lit = view.Key.Kind == TextEntry.KeyKind.Shift && entry.Shift;
+            view.Background.color = selected ? WithAlpha(_style.Selected, 0.9f) : new Color(0f, 0f, 0f, lit ? 0.6f : 0.35f);
+            SetIfChanged(view.Label, view.Key.Label(entry.Shift), selected ? KeyLabelOnSelected : lit ? _style.Selected : _style.NotSelected);
+        }
+    }
+
+    /// <summary>
+    /// The text with a blinking caret; the user's text isn't read as rich text. Hidden, the caret
+    /// is drawn clear rather than left out, so the text doesn't shift as it blinks.
+    /// </summary>
+    private static string FieldText(TextEntry entry)
+    {
+        var text = entry.Text;
+        if (entry.AllSelected)
+        {
+            return $"<mark=#FFFFFF40><noparse>{text}</noparse></mark>";
+        }
+
+        var on = (Time.unscaledTime - entry.LastChange) % (CaretBlinkSeconds * 2f) < CaretBlinkSeconds;
+        var caret = on ? "|" : "<color=#00000000>|</color>";
+        return $"<noparse>{text[..entry.Caret]}</noparse>{caret}<noparse>{text[entry.Caret..]}</noparse>";
+    }
+
+    private static void SetIfChanged(TextMeshProUGUI text, string value, Color color)
+    {
+        if (text.text != value)
+        {
+            text.text = value;
+        }
+
+        text.color = color;
     }
 
     private static void HandlePointer(LevelSelect menu, EditorInput input)
@@ -268,8 +385,18 @@ internal static class LevelSelectView
         var size = _style.FontSize;
         SetText(_breadcrumb, menu.Breadcrumb, size * 0.5f, WithAlpha(_style.NotSelected, 0.6f));
         SetText(_title, menu.Title, size * 1.6f, _style.Selected);
-        SetText(_description, menu.Description, size * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
+        _shownDescription = null;
+        SetText(_description, null, size * 0.6f, WithAlpha(_style.NotSelected, 0.8f));
         SetText(_hints, _hints.text, size * 0.5f, WithAlpha(_style.NotSelected, 0.7f));
+        Style(_field, size);
+        _field.fontSizeMax = size;
+        _field.fontSizeMin = size * 0.45f;
+        Style(_fieldNote, size * 0.5f);
+        foreach (var view in KeyViews)
+        {
+            Style(view.Label, view.Key.Kind == TextEntry.KeyKind.Char ? size * 0.6f : size * 0.42f);
+        }
+
         // Checked with Unity's null too: a destroyed sprite would draw as a white square.
         var useGameArrow = _style.Arrow != null;
         _arrowImage.sprite = useGameArrow ? _style.Arrow : _fallbackArrow ??= ArrowSprite();
@@ -399,7 +526,7 @@ internal static class LevelSelectView
         Rows.Clear();
         _rowCount = 0;
         _shownMenu = null;
-        _shownGamepad = null;
+        _shownHints = null;
         _style = MenuStyle.Current;
 
         _root = new GameObject("CairnRouteMaker.LevelSelectView");
@@ -433,12 +560,16 @@ internal static class LevelSelectView
         _title.alignment = TextAlignmentOptions.MidlineLeft;
 
         _description = NewText("Description", _root.transform);
-        Place(_description.rectTransform, Left, 268f, ListWidth, 40f);
+        // Two lines, for a route's description; the list starts below them.
+        Place(_description.rectTransform, Left, 268f, ListWidth, 76f);
         _description.alignment = TextAlignmentOptions.TopLeft;
+        _description.textWrappingMode = TextWrappingModes.Normal;
 
         _hints = NewText("Hints", _root.transform);
         Place(_hints.rectTransform, Left, ReferenceHeight - 80f, ListWidth, 40f);
         _hints.alignment = TextAlignmentOptions.MidlineLeft;
+
+        BuildTextEntry();
 
         _viewport = NewRect("List", _root.transform);
         Place(_viewport, Left, ListTop - Fade, ListWidth + 200f, ViewportHeight);
@@ -461,9 +592,61 @@ internal static class LevelSelectView
         _root.SetActive(false);
     }
 
+    private static void BuildTextEntry()
+    {
+        var fieldHeight = _style.FontSize * FieldHeightPerFontSize;
+        _field = NewText("Field", _root.transform);
+        Place(_field.rectTransform, Left, ListTop, ListWidth, fieldHeight);
+        _field.alignment = TextAlignmentOptions.MidlineLeft;
+        // A long description shrinks to fit rather than running off the end.
+        _field.enableAutoSizing = true;
+
+        var line = NewRect("FieldLine", _root.transform);
+        Place(line, Left, ListTop + fieldHeight, ListWidth * 0.75f, 2f);
+        _fieldLine = line.gameObject.AddComponent<Image>();
+        _fieldLine.raycastTarget = false;
+
+        _fieldNote = NewText("FieldNote", _root.transform);
+        Place(_fieldNote.rectTransform, Left, ListTop + fieldHeight + 10f, ListWidth, 34f);
+        _fieldNote.alignment = TextAlignmentOptions.TopLeft;
+
+        _keyboard = NewRect("Keyboard", _root.transform);
+        Place(_keyboard, Left, KeyboardTop, TextEntry.Columns * (KeyWidth + KeyGap), TextEntry.Layout.Count * (KeyHeight + KeyGap));
+        KeyViews.Clear();
+        for (var row = 0; row < TextEntry.Layout.Count; row++)
+        {
+            foreach (var key in TextEntry.Layout[row])
+            {
+                // A plain Image with no sprite draws a filled rectangle.
+                var rect = NewRect($"Key{row}.{key.Column}", _keyboard);
+                Place(rect, key.Column * (KeyWidth + KeyGap), row * (KeyHeight + KeyGap), key.Span * KeyWidth + (key.Span - 1) * KeyGap, KeyHeight);
+                var background = rect.gameObject.AddComponent<Image>();
+                background.raycastTarget = false;
+                var label = NewText("Label", rect);
+                Place(label.rectTransform, 0f, 0f, rect.sizeDelta.x, KeyHeight);
+                label.alignment = TextAlignmentOptions.Center;
+                KeyViews.Add(new KeyView { Key = key, Background = background, Label = label });
+            }
+        }
+
+        _field.gameObject.SetActive(false);
+        _fieldLine.gameObject.SetActive(false);
+        _fieldNote.gameObject.SetActive(false);
+        _keyboard.gameObject.SetActive(false);
+    }
+
     private static string Hint(string key, string action) => $"<color=#FFFFFF>{key}</color>  {action}<space=2em>";
 
     private static void SetText(TextMeshProUGUI text, string value, float size, Color color)
+    {
+        Style(text, size);
+        text.color = color;
+        text.text = value ?? "";
+        text.gameObject.SetActive(!string.IsNullOrEmpty(value));
+    }
+
+    /// <summary>The menu's font, in a size.</summary>
+    private static void Style(TextMeshProUGUI text, float size)
     {
         if (_style.Font != null && text.font != _style.Font)
         {
@@ -476,9 +659,6 @@ internal static class LevelSelectView
         }
 
         text.fontSize = size;
-        text.color = color;
-        text.text = value ?? "";
-        text.gameObject.SetActive(!string.IsNullOrEmpty(value));
     }
 
     private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);

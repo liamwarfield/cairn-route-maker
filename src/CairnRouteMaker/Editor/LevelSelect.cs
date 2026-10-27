@@ -16,6 +16,7 @@ namespace CairnRouteMaker.Editor;
 /// "Manage saved routes" lists every route with travel and delete actions. On the title screen it's
 /// the free-climb launcher instead: a mountain, a zone, then one of its routes or a spawn point to
 /// start from without one. Both end with the settings: the paint colours (see <see cref="PaintColors"/>).
+/// Wherever a route is listed, the Edit route button (Y / E by default) opens its Edit Route page.
 /// Pages are rebuilt each time they show.
 /// </summary>
 internal sealed class LevelSelect
@@ -23,7 +24,7 @@ internal sealed class LevelSelect
     public sealed class Entry
     {
         public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null,
-            IReadOnlyList<Color32> swatches = null)
+            IReadOnlyList<Color32> swatches = null, Action edit = null, string detail = null)
         {
             Label = label;
             IsHeader = isHeader;
@@ -32,6 +33,8 @@ internal sealed class LevelSelect
             LeavesEditor = leavesEditor;
             Note = note;
             Swatches = swatches;
+            Edit = edit;
+            Detail = detail;
         }
 
         public string Label { get; }
@@ -47,6 +50,12 @@ internal sealed class LevelSelect
 
         /// <summary>Travel entries: the editor closes (handing back input and camera) before they run.</summary>
         public bool LeavesEditor { get; }
+
+        /// <summary>What the Edit route button does on this entry, or null: route entries open the route's Edit Route page.</summary>
+        public Action Edit { get; }
+
+        /// <summary>Shown in place of the page's description while this entry is highlighted, e.g. a route's description; or null.</summary>
+        public string Detail { get; }
     }
 
     /// <summary>Where to start a free-climb game; with a route, Ava is then taken to its start.</summary>
@@ -66,8 +75,14 @@ internal sealed class LevelSelect
         public Route Route { get; }
     }
 
+    /// <summary>Route names are cut off in the menus well before this, but it keeps them to one line.</summary>
+    private const int MaxNameLength = 40;
+    /// <summary>One line as typed; the text box shrinks its font to fit. It fits in two lines under the title.</summary>
+    private const int MaxDescriptionLength = 100;
+
     private readonly List<Entry> _entries = new();
     private readonly Stack<Action> _back = new();
+    private Action<string> _textDone;
     private RouteStorage _storage;
     private RouteEditor _editor;
     private Traveler _traveler;
@@ -94,6 +109,9 @@ internal sealed class LevelSelect
     /// <summary>The highlighted entry, if it can be chosen.</summary>
     public Entry Current => Selected >= 0 && Selected < _entries.Count && _entries[Selected].Enabled ? _entries[Selected] : null;
 
+    /// <summary>The page's text box, e.g. a route's new name, or null. While there is one, it takes all the menu's input.</summary>
+    public TextEntry TextEntry { get; private set; }
+
     /// <summary>Open in game, over the route editor; choosing a route changes the one it shows.</summary>
     public void Open(RouteEditor editor, RouteStorage storage, Traveler traveler, Action<string> report)
     {
@@ -107,16 +125,48 @@ internal sealed class LevelSelect
     }
 
     /// <summary>Open as the free-climb launcher (title screen): choosing a place calls <paramref name="launch"/>.</summary>
-    public void OpenLauncher(RouteStorage storage, Action<LaunchTarget> launch)
+    public void OpenLauncher(RouteStorage storage, Action<LaunchTarget> launch, Action<string> report)
     {
         _storage = storage;
         _launch = launch;
+        _report = report;
         _back.Clear();
         ShowLaunch();
         IsOpen = true;
     }
 
-    public void Close() => IsOpen = false;
+    public void Close()
+    {
+        IsOpen = false;
+        TextEntry = null;
+    }
+
+    /// <summary>The Edit route button: edit the highlighted route, if it is one.</summary>
+    public void Edit() => Current?.Edit?.Invoke();
+
+    /// <summary>
+    /// Type into the page's text box, if it has one. Returns true if it did, and then the menu's
+    /// own input should be skipped this frame.
+    /// </summary>
+    public bool UpdateTextEntry()
+    {
+        if (TextEntry == null)
+        {
+            return false;
+        }
+
+        switch (TextEntry.Update())
+        {
+            case TextEntryResult.Done:
+                _textDone(TextEntry.Text);
+                break;
+            case TextEntryResult.Cancelled:
+                Back();
+                break;
+        }
+
+        return true;
+    }
 
     /// <summary>Back out one page; from the first page, close the menu.</summary>
     public void Back()
@@ -173,7 +223,7 @@ internal sealed class LevelSelect
             {
                 if (route.ZoneKey == here)
                 {
-                    Add(RouteEntry(route));
+                    Add(RouteEntry(route, ShowLevels));
                 }
             }
 
@@ -253,16 +303,17 @@ internal sealed class LevelSelect
     {
         Begin(ZoneNames.Pretty(zone), $"Level Select · {Mountain(world)}", "Climb one of its routes, or go there without one.");
         Add(Header("Routes"));
-        AddRoutes(_storage.LoadAll(), $"{world}/{zone}", RouteEntry);
+        AddRoutes(_storage.LoadAll(), $"{world}/{zone}", route => RouteEntry(route, () => ShowZoneRoutes(world, zone)));
         Add(Header("Without a route"));
         Add(new Entry($"Go to {ZoneNames.Pretty(zone)}", false, true, () => GoWithoutRoute(world, zone), leavesEditor: true));
         End();
     }
 
-    /// <summary>A route to switch to: choosing it shows it and takes Ava to its start.</summary>
-    private Entry RouteEntry(Route route) =>
+    /// <summary>A route to switch to: choosing it shows it and takes Ava to its start. <paramref name="page"/> is the page it's on.</summary>
+    private Entry RouteEntry(Route route, Action page) =>
         new(route.Name, false, TryParseZone(route.ZoneKey, out _, out _), () => Climb(route), leavesEditor: true,
-            note: Notes(_editor.IsShowing(route) ? "showing" : null, route.Start == null ? "no start set" : null));
+            note: Notes(_editor.IsShowing(route) ? "showing" : null, route.Start == null ? "no start set" : null),
+            edit: EditAction(route, page), detail: route.Description);
 
     private void ShowLaunch()
     {
@@ -323,7 +374,8 @@ internal sealed class LevelSelect
         Add(Header("Routes"));
         AddRoutes(_storage.LoadAll(), $"{world}/{name}", route =>
             new Entry(route.Name, false, true, () => _launch(new LaunchTarget(world, name, first, route)), leavesEditor: true,
-                note: route.Start == null ? "no start set" : null));
+                note: route.Start == null ? "no start set" : null,
+                edit: EditAction(route, () => ShowLaunchZone(world, zone)), detail: route.Description));
 
         Add(Header("Without a route"));
         if (zone.Spawners.Count == 1)
@@ -371,7 +423,8 @@ internal sealed class LevelSelect
             }
 
             Add(new Entry(route.Name, false, true, () => Push(ShowRoutes, () => ShowRouteActions(route)),
-                note: Notes(_editor.IsShowing(route) ? "showing" : null, Summary(route))));
+                note: Notes(_editor.IsShowing(route) ? "showing" : null, Summary(route)), edit: EditAction(route, ShowRoutes),
+                detail: route.Description));
         }
 
         End();
@@ -398,7 +451,7 @@ internal sealed class LevelSelect
             try
             {
                 _storage.Delete(route, DateTime.Now);
-                _editor.OnRouteDeleted(route);
+                _editor?.OnRouteDeleted(route);
                 _report?.Invoke($"Deleted {route.Name} from {ZoneNames.PrettyKey(route.ZoneKey)} (backed up).");
             }
             catch (Exception e)
@@ -406,12 +459,129 @@ internal sealed class LevelSelect
                 _report?.Invoke($"Couldn't delete the route: {e.Message}");
             }
 
-            // Skip the now-stale actions page and go back to the (shorter) list.
+            // Skip the now-stale page of the route and go back to the (shorter) list it was opened from.
             _back.Pop();
-            _back.Pop();
-            ShowRoutes();
+            _back.Pop()();
         }));
         End();
+    }
+
+    /// <summary>The Edit route button on a route's entry: open its Edit Route page, coming back to <paramref name="page"/>.</summary>
+    private Action EditAction(Route route, Action page) => () => Push(page, () => ShowEditRoute(route));
+
+    private void ShowEditRoute(Route route)
+    {
+        Begin(route.Name, $"Edit Route · {Place(route.ZoneKey)}", Summary(route));
+        Action page = () => ShowEditRoute(route);
+        Add(new Entry("Rename", false, true, () => Push(page, () => ShowTextField(route, "Rename Route", "Type a new name for this route.",
+            route.Name, MaxNameLength, name => Rename(route, name)))));
+        Add(new Entry("Description", false, true, () => Push(page, () => ShowTextField(route, "Description", "A line or two about the route. Leave it empty for none.",
+            route.Description, MaxDescriptionLength, text => SetDescription(route, text))),
+            note: route.Description == null ? "none" : null, detail: route.Description));
+        Add(new Entry("Duplicate", false, true, () => Duplicate(route)));
+        Add(new Entry("Delete", false, true, () => Push(page, () => ShowConfirmDelete(route))));
+        End();
+    }
+
+    /// <summary>A page for typing one of a route's details. <paramref name="done"/> gets the text, and goes back or sets an error.</summary>
+    private void ShowTextField(Route route, string title, string description, string text, int maxLength, Action<string> done)
+    {
+        Begin(title, $"Edit Route · {route.Name}", description);
+        End();
+        TextEntry = new TextEntry(text, maxLength);
+        _textDone = done;
+    }
+
+    /// <summary>Save a route under a new name and go back to its Edit Route page, or say why the name can't be used.</summary>
+    private void Rename(Route route, string name)
+    {
+        name = name.Trim();
+        if (name == route.Name)
+        {
+            Back();
+            return;
+        }
+
+        if (name.Length == 0)
+        {
+            TextEntry.Error = "A route needs a name.";
+            return;
+        }
+
+        if (_storage.LoadAll().Exists(other => other.ZoneKey == route.ZoneKey && other.Id != route.Id
+                && string.Equals(other.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            TextEntry.Error = $"Another route in {ZoneNames.PrettyKey(route.ZoneKey)} is called that.";
+            return;
+        }
+
+        var old = route.Name;
+        route.Name = name;
+        if (!TrySave(route))
+        {
+            route.Name = old;
+            return;
+        }
+
+        _report?.Invoke($"Renamed {old} to {name}.");
+        Back();
+    }
+
+    /// <summary>Save a route's description (empty for none) and go back to its Edit Route page.</summary>
+    private void SetDescription(Route route, string text)
+    {
+        var value = text.Trim();
+        value = value.Length == 0 ? null : value;
+        var old = route.Description;
+        if (value != old)
+        {
+            route.Description = value;
+            if (!TrySave(route))
+            {
+                route.Description = old;
+                return;
+            }
+        }
+
+        Back();
+    }
+
+    /// <summary>Write a route changed on a text page, and give the editor's copy the change too; if it fails, say why on the page.</summary>
+    private bool TrySave(Route route)
+    {
+        try
+        {
+            _storage.Save(route);
+        }
+        catch (Exception e)
+        {
+            TextEntry.Error = $"Couldn't save: {e.Message}";
+            return false;
+        }
+
+        _editor?.OnRouteDetailsChanged(route);
+        return true;
+    }
+
+    /// <summary>Save a copy of a route and show the copy's Edit Route page in place of the original's.</summary>
+    private void Duplicate(Route route)
+    {
+        // The editor's copy may have changes its file doesn't have yet.
+        var source = _editor != null && _editor.IsShowing(route) ? _editor.Route : route;
+        Route copy;
+        try
+        {
+            copy = _storage.Duplicate(source);
+        }
+        catch (Exception e)
+        {
+            _report?.Invoke($"Couldn't copy the route: {e.Message}");
+            return;
+        }
+
+        _report?.Invoke($"Saved a copy: {copy.Name}.");
+        // Backing out then goes to the list, which has the copy in it too.
+        ShowEditRoute(copy);
     }
 
     /// <summary>Add an entry for each saved route of a zone, or a line saying there are none.</summary>
@@ -627,6 +797,7 @@ internal sealed class LevelSelect
         Page++;
         _entries.Clear();
         ClickedIndex = null;
+        TextEntry = null;
     }
 
     private void Add(Entry entry) => _entries.Add(entry);

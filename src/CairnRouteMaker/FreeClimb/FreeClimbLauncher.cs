@@ -39,7 +39,7 @@ internal sealed class FreeClimbLauncher
         }
 
         MelonLogger.Msg($"Opening the free-climb menu; title screen: {GameApi.DescribeMainMenu()}");
-        _menu.OpenLauncher(_storage, Launch);
+        _menu.OpenLauncher(_storage, Launch, SetStatus);
         _open = true;
         _openedFrame = Time.frameCount;
         _unblockAtFrame = -1;
@@ -91,6 +91,11 @@ internal sealed class FreeClimbLauncher
             return;
         }
 
+        if (_menu.UpdateTextEntry())
+        {
+            return;
+        }
+
         if (_input.MenuBack)
         {
             _menu.Back();
@@ -99,6 +104,12 @@ internal sealed class FreeClimbLauncher
                 Close();
             }
 
+            return;
+        }
+
+        if (_input.MenuEdit)
+        {
+            _menu.Edit();
             return;
         }
 

@@ -63,6 +63,24 @@ public sealed class RouteStorage
     }
 
     /// <summary>
+    /// Save a copy of a route as a new file in its zone, called "Name (copy)", or "Name (copy 2)"
+    /// and so on if that's taken.
+    /// </summary>
+    public Route Duplicate(Route route)
+    {
+        var copy = RouteFile.Deserialize(RouteFile.Serialize(route));
+        var names = LoadAll().FindAll(other => other.ZoneKey == route.ZoneKey).ConvertAll(other => other.Name);
+        copy.Name = $"{route.Name} (copy)";
+        for (var number = 2; names.Contains(copy.Name); number++)
+        {
+            copy.Name = $"{route.Name} (copy {number})";
+        }
+
+        Save(copy);
+        return copy;
+    }
+
+    /// <summary>
     /// Remove a route by moving its file to a Backups folder next to the routes folder, stamped
     /// with the time, so a deletion can always be undone by moving the file back.
     /// </summary>
