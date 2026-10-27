@@ -768,7 +768,7 @@ internal sealed class RouteEditor
 
         if (Input.Teleport && HasBrushTarget)
         {
-            if (GameApi.TryQuickTeleportAva(hit.point, _yaw, out var reason))
+            if (GameApi.TryQuickTeleportAva(hit, _yaw, out var reason))
             {
                 GameApi.RestoreAva();
                 Close();

@@ -959,6 +959,13 @@ internal static class GameApi
     /// <summary>How close the probe has to find rock to the picked point to trust its normal.</summary>
     private const float SurfaceProbeTolerance = 0.2f;
 
+    /// <summary>How far a hold can stick out of its wall: the probe for the wall behind it reaches this far.</summary>
+    private const float HoldDepth = 0.5f;
+
+    private const int GroundLayer = 3;
+    private const int ClimbingWallLayer = 6;
+    private const int ClimbingHoldsLayer = 12;
+
     private static readonly Vector3[] SurfaceProbeDirections = BuildSurfaceProbeDirections();
 
     /// <summary>
@@ -967,43 +974,75 @@ internal static class GameApi
     /// </summary>
     public static Placement PlaceAva(Vector3 point, float yawDegrees)
     {
-        var standing = new Placement(point, Quaternion.Euler(0f, yawDegrees, 0f), PawnControllerSwitcher.Mode.Walking);
-        if (!TryFindSurfaceNormal(point, out var normal) || normal.y >= MinGroundNormalY)
+        if (!TryProbeSurface(point, SurfaceMask, SurfaceProbeTolerance, out var hit))
         {
-            return standing;
+            MelonLogger.Msg($"No rock found at {point}; Ava arrives on her feet.");
+            return Standing(point, yawDegrees);
+        }
+
+        return PlaceAva(point, hit, yawDegrees);
+    }
+
+    /// <summary>
+    /// Decide how Ava should arrive at <paramref name="point"/>, given the rock there (a raycast
+    /// hit on <see cref="SurfaceMask"/>, which is how the freecam picks it). Only ClimbingWall is
+    /// climbed: steep Ground is somewhere she walks or slides, and a hold's own faces say nothing
+    /// about the slope of the wall it's on, so that's looked up behind it.
+    /// </summary>
+    public static Placement PlaceAva(Vector3 point, RaycastHit hit, float yawDegrees)
+    {
+        var layer = hit.collider == null ? GroundLayer : hit.collider.gameObject.layer;
+        if (layer == ClimbingHoldsLayer)
+        {
+            if (!TryProbeSurface(point, 1 << ClimbingWallLayer, HoldDepth, out hit))
+            {
+                MelonLogger.Msg($"No wall behind the hold at {point}; Ava arrives on her feet.");
+                return Standing(point, yawDegrees);
+            }
+
+            layer = ClimbingWallLayer;
+        }
+
+        var normal = hit.normal;
+        if (layer != ClimbingWallLayer || normal.y >= MinGroundNormalY)
+        {
+            return Standing(point, yawDegrees);
         }
 
         // Face into the rock, upright, the way fly mode drops her. Under a roof there's no
         // horizontal direction to face, so keep the yaw she was given.
         var facing = new Vector3(-normal.x, 0f, -normal.z);
-        var rotation = facing.sqrMagnitude > 0.01f ? Quaternion.LookRotation(facing.normalized, Vector3.up) : standing.Rotation;
-        return new Placement(point + normal * WallStandOff, rotation, PawnControllerSwitcher.Mode.Climbing);
+        var rotation = facing.sqrMagnitude > 0.01f ? Quaternion.LookRotation(facing.normalized, Vector3.up) : Quaternion.Euler(0f, yawDegrees, 0f);
+        return new Placement(hit.point + normal * WallStandOff, rotation, PawnControllerSwitcher.Mode.Climbing);
     }
 
+    private static Placement Standing(Vector3 point, float yawDegrees) =>
+        new(point, Quaternion.Euler(0f, yawDegrees, 0f), PawnControllerSwitcher.Mode.Walking);
+
     /// <summary>
-    /// The normal of the rock at <paramref name="point"/>: cast at it from all round and keep the hit
-    /// that lands closest. Rays starting inside the rock pass out through its back faces and miss.
+    /// The rock surface nearest <paramref name="point"/>, within <paramref name="tolerance"/>: cast
+    /// at it from all round and keep the closest hit. Every hit along each ray counts, so rock
+    /// nearer a ray's start (the other side of a crack) doesn't hide it. Rays starting inside the
+    /// rock pass out through its back faces without hitting them.
     /// </summary>
-    private static bool TryFindSurfaceNormal(Vector3 point, out Vector3 normal)
+    private static bool TryProbeSurface(Vector3 point, int mask, float tolerance, out RaycastHit best)
     {
         const float reach = 1f;
-        var mask = SurfaceMask;
-        var best = SurfaceProbeTolerance * SurfaceProbeTolerance;
-        normal = Vector3.up;
+        var bestDistance = tolerance * tolerance;
+        best = default;
         var found = false;
         foreach (var direction in SurfaceProbeDirections)
         {
-            if (!Physics.Raycast(point + direction * reach, -direction, out var hit, reach * 1.5f, mask, QueryTriggerInteraction.Ignore))
+            var hits = Physics.RaycastAll(point + direction * reach, -direction, reach * 1.5f, mask, QueryTriggerInteraction.Ignore);
+            for (var i = 0; i < hits.Length; i++)
             {
-                continue;
-            }
-
-            var distance = (hit.point - point).sqrMagnitude;
-            if (distance <= best)
-            {
-                best = distance;
-                normal = hit.normal;
-                found = true;
+                var distance = (hits[i].point - point).sqrMagnitude;
+                if (distance <= bestDistance)
+                {
+                    bestDistance = distance;
+                    best = hits[i];
+                    found = true;
+                }
             }
         }
 
@@ -1049,26 +1088,46 @@ internal static class GameApi
     }
 
     /// <summary>
-    /// Move Ava within the zone that's already loaded, with no loading screen and no save (see
-    /// <see cref="TryHop"/>). Another zone goes through <see cref="TryTeleportAva"/>.
+    /// Move Ava to the rock the freecam is pointing at, within the zone that's already loaded,
+    /// with no loading screen and no save (see <see cref="TryHop"/>). Another zone, or a game
+    /// that's over, goes through the warp as <see cref="TryTeleportAva"/> does.
     /// </summary>
-    public static bool TryQuickTeleportAva(Vector3 point, float yawDegrees, out string reason)
+    public static bool TryQuickTeleportAva(RaycastHit hit, float yawDegrees, out string reason)
     {
         if (!CanMoveAva(out reason))
         {
             return false;
         }
 
+        var placement = PlaceAva(hit.point, hit, yawDegrees);
         var streaming = StreamingManager.Instance;
-        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(point);
+        var targetZone = streaming == null ? null : streaming.GetBestZoneAt(hit.point);
         var sameZone = targetZone != null && streaming.CurrentZone != null && targetZone.name == streaming.CurrentZone.name;
         if (!sameZone)
         {
             MelonLogger.Msg($"Quick teleport not possible (target zone {(targetZone == null ? "none" : targetZone.name)}); using the warp.");
-            return TryTeleportAva(point, yawDegrees, out reason);
+        }
+        else if (IsGameOver)
+        {
+            // The warp revives her and waits for the respawn before moving her.
+            MelonLogger.Msg("Quick teleport not possible (game over); using the warp.");
+        }
+        else
+        {
+            return TryHop(placement, out reason);
         }
 
-        return TryHop(PlaceAva(point, yawDegrees), out reason);
+        return TryWarp(placement) || TryHop(placement, out reason);
+    }
+
+    /// <summary>Ava has died or passed out and the game is waiting to respawn her.</summary>
+    private static bool IsGameOver
+    {
+        get
+        {
+            var game = GlobalGameManager.Instance;
+            return game != null && game.CurrentGameState == GlobalGameManager.GameState.GameOver;
+        }
     }
 
     private static bool TryWarp(Placement placement)
@@ -1119,6 +1178,15 @@ internal static class GameApi
         try
         {
             MelonLogger.Msg($"Moving Ava to {placement.Position} ({placement.Mode}).");
+
+            // The warp's first step: after a fall that ends the game she has to be brought back
+            // before she can be moved.
+            if (IsGameOver && PawnManager.Instance != null)
+            {
+                MelonLogger.Msg("Reviving Ava first.");
+                PawnManager.Instance.Respawn(PawnManager.RespawnMode.Revive, null);
+            }
+
             if (path != null)
             {
                 path.HaltPath();

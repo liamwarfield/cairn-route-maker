@@ -32,15 +32,22 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
     2. `RaycastHitExtensions.GetCapsulePoleForHitPosition(hit, origin, dir)` (in `Il2CppTheGameBakers.Cairn.Utilities`) gives the sphere's centre at impact, 0.3 m off the rock. It becomes `offStateParameters.position`.
     3. On exit it moves her root there, keeping a yaw-only rotation, and calls `TransitionToMode(Climbing, null, null, false, None, true)`.
   - The game's debug commands `ClimberMemorySaveDC` / `ClimberMemoryRestoreDC` and the climb snapshots (`SceneSnapshotClimbData`: a hold id per limb) restore an exact saved grip. They can't place her at an arbitrary point.
+  - **Wall or ground (the mod's rule):**
+    - She climbs only where the rock under the point is on the ClimbingWall layer and steeper than about 45° (normal y < 0.7).
+    - Ground is always walked, however steep.
+    - A hold (ClimbingHolds) is judged by the ClimbingWall surface within 0.5 m of it, since a jug's top faces up even on a vertical wall.
+    - The freecam passes its raycast hit. Route starts store only a point, so the mod finds the surface again by casting at the point from 26 directions (`Physics.RaycastAll`, so the far side of a crack doesn't hide it). If nothing is found within 0.2 m, it logs that and she arrives on her feet.
 - Full sequence in `FreeRoamManager.WarpRoutine` (**xref**):
-  1. Wait while `CairnSceneManager.IsBusy()`.
-  2. `PathRecorder.HaltPath()`.
-  3. Equip or unequip ice gear as the warp point says (see "Ice gear").
-  4. `TransitionToMode`.
-  5. `RobotPawnController.TeleportNearClimber`.
-  6. Clean up pitons via `Lifeline`.
-  7. `PathRecorder.ResumePath()`.
-  8. Save.
+  1. If `GlobalGameManager.Instance.CurrentGameState == GameOver`, `PawnManager.Respawn(RespawnMode.Revive)`.
+  2. Wait while `CairnSceneManager.IsBusy()`.
+  3. `PathRecorder.HaltPath()`.
+  4. Equip or unequip ice gear as the warp point says (see "Ice gear").
+  5. `TransitionToMode`.
+  6. `RobotPawnController.TeleportNearClimber`.
+  7. Clean up pitons via `Lifeline`.
+  8. Wait a frame, then while the scene manager is busy or Ava is hovering.
+  9. `PathRecorder.ResumePath()`.
+  10. Save.
 - CairnMP's approach (**mp**):
   1. Teleport only while Walking.
   2. If the target is in another zone (`StreamingManager.Instance.GetBestZoneAt(pos)` differs from `CurrentZone`), call `CairnSceneManager.Instance.TravelToZone`, then wait for loading to finish.
@@ -181,19 +188,20 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
 ## Warping and camera streaming
 
 - **Safe teleport:** `FreeRoamManager.Instance.WarpToPoint(FreeRoamWarpPoint wp, Disk.IOOperationCallback onDone)`. This is the game's map warp. It shows a loading screen, then `WarpRoutine` runs (**xref**):
-  1. Wait for `CairnSceneManager.IsBusy()` to clear.
-  2. `PathRecorder.HaltPath()`.
-  3. Put on or take off ice gear as the warp point's `setIceEquipment` says.
-  4. `TransitionToMode(wp.WarpMode, wp.TeleportDestination, ...)`.
-  5. `RobotPawnController.TeleportNearClimber`.
-  6. Detach and remove the last securing piton from the `Lifeline`.
-  7. `PawnManager.Respawn` when needed.
+  1. Revive Ava with `PawnManager.Respawn(RespawnMode.Revive)` if the game is over.
+  2. Wait for `CairnSceneManager.IsBusy()` to clear.
+  3. `PathRecorder.HaltPath()`.
+  4. Put on or take off ice gear as the warp point's `setIceEquipment` says.
+  5. `TransitionToMode(wp.WarpMode, wp.TeleportDestination, ...)`.
+  6. `RobotPawnController.TeleportNearClimber`.
+  7. Detach and remove the last securing piton from the `Lifeline`.
   8. `ResumePath()`, then save.
 
   `WarpToPoint` is `CairnSceneManager.ShowLoadingScreen`, then `WarpRoutine` (public), then `HideLoadingScreen`. The routine always ends with `SavegameManager.Save`, which shows the auto-save icon. Its other steps can be called directly, which is what the mod does for hops within the loaded zone:
   - `switcher.PathRecorder.HaltPath()` / `ResumePath()`.
   - `PawnManager.UnEquipAllIceClimbingDevices(true, true, true)`, or `EquipAllIceClimbigDevices(true, false)` when the point has `setIceEquipment` (see Ice gear above).
   - `climbingPawnController.associatedRobotPawn.TeleportNearClimber(true, true)`.
+  - The revive. A hop is never made while the game is over: the freecam uses the warp then, so the routine's wait after the revive applies. The revive is only called directly when there's no `FreeRoamManager`.
   - Loop over `climbingPawnController.harness.Lifeline.GetLastSecuringPiton()`: `DetachPiton` if the piton's object is alive, `RemovePiton` otherwise.
 
   The warp passes the point's position but no rotation (`TransitionToMode(wp.warpMode, pos, null, true, None, true)`), so with `warpMode = Climbing` the climbing reset decides which way she faces.
