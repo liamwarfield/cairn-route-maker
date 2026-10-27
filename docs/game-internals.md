@@ -207,6 +207,17 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
   The warp passes the point's position but no rotation (`TransitionToMode(wp.warpMode, pos, null, true, None, true)`), so with `warpMode = Climbing` the climbing reset decides which way she faces.
 
   A bare `TransitionToMode` skips these steps. In testing it sometimes left Ava T-posed and unusable, and it does nothing useful while she's climbing.
+- **Leaving Game Over:**
+  - `GameState.GameOver` is pushed only by `GameOverMenu.OnOpening`. It is popped only by `GameOverMenu.PopGameOverState`, which runs when the menu closes (`OnClosing`, `OnDestroy`), and only if the menu was fully opened. **xref**
+  - Closing the menu also restores `Time.timeScale` and unpauses time, pops the GameOver input context, stops the death music and brings sound back. **log** (`TGBTools.*.log` next to Player.log)
+  - `PawnManager.Respawn(Revive)` only resets the pawn, stats, path recorder and Climbot. It doesn't touch the menu or the game state. **xref**
+  - The death screen's retry (`RetryFromSave`, CanWarp branch) calls `WarpToPoint` then `Close(false)` on the menu. Its map's fast travel (`EagleEyeUI.OnReloadSaveInput`) calls `WarpToPoint` and nothing else, so the game stays over: no sound, death music, time stopped. **xref**
+  - The mod closes the menu (`GameOverMenu.IsOpened`, then `Close(false)`) after its own revive warps, and after fast travel through a Harmony patch.
+  - **Sound after a warp retry:**
+    - `GameOverMenu.Retry` sets `SoundManager.BackToMainMenu`. Only `SoundManager.OnLevelLoading` clears it, and a CanWarp retry never loads a level. **xref**
+    - While it's set, `SoundManager.OnChangeGameState` doesn't put Wwise `STATE_GAME` back to `INGAME`, so it stays `GAMEOVER` and sound effects are silent. Dying runs `PawnAudioHandler.TryPostGameOver`, which posts the game-over event and sets `STATE_GAME` to `GAMEOVER`. **xref**; that the state mutes sound effects is a **guess** from the soundbank side.
+    - `MusicManager.OnChangeGameState` then stops the music. Nothing restarts it, because the zone's module is unchanged, and only `SetMusic` posts the music again (a level load does it with `SetMusic(NONE)`). **xref**
+    - In free climb the mod restores all three when the menu closes in game: it clears the flag, calls `SoundManager.SetState(STATE_GAME.GROUP, STATE_GAME.STATE.INGAME)` and `MusicManager.SetMusic(STATE_MUSIC.STATE.NONE, false)`.
 - **Warp points from code:**
   - A `FreeRoamWarpPoint` on an **inactive** GameObject works as a one-off destination. Its position and rotation come from the transform, and `warpMode` is Walking or Climbing.
   - Keep the object inactive, otherwise `Awake` registers it in the game's own warp list.

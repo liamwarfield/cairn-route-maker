@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Il2Cpp;
 using Il2CppTheGameBakers.Cairn;
@@ -956,6 +957,7 @@ internal static class GameApi
     /// <summary>Rock steeper than about 45 degrees is a wall, so she starts on it rather than on her feet.</summary>
     private const float MinGroundNormalY = 0.7f;
 
+
     /// <summary>How close the probe has to find rock to the picked point to trust its normal.</summary>
     private const float SurfaceProbeTolerance = 0.2f;
 
@@ -1121,13 +1123,103 @@ internal static class GameApi
     }
 
     /// <summary>Ava has died or passed out and the game is waiting to respawn her.</summary>
-    private static bool IsGameOver
+    public static bool IsGameOver
     {
         get
         {
             var game = GlobalGameManager.Instance;
             return game != null && game.CurrentGameState == GlobalGameManager.GameState.GameOver;
         }
+    }
+
+    /// <summary>
+    /// Close the game-over screen once Ava has been revived. Reviving her doesn't leave the game's
+    /// GameOver state: only closing the screen does (GameOverMenu.PopGameOverState), and with it
+    /// time restarts, the death music stops and other sound comes back. The screen's own retry
+    /// warps and then closes it; its map's "fast travel" and the mod's warp have to do it here.
+    /// </summary>
+    public static void CloseGameOverMenu()
+    {
+        try
+        {
+            if (!TryCloseGameOverMenu())
+            {
+                MelonCoroutines.Start(CloseGameOverMenuWhenOpened());
+            }
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Error($"Failed closing the game-over screen: {e}");
+        }
+    }
+
+    /// <summary>
+    /// Undo what dying did to the sound when the game carries on without loading a level (see
+    /// GameOverPatches): clear SoundManager.BackToMainMenu, put the sound engine's game state back
+    /// to in-game (what SoundManager does on returning to the game when the flag is clear), and
+    /// start the zone's music again (what MusicManager does when a game starts).
+    /// </summary>
+    public static void RestoreInGameSound()
+    {
+        var sound = SoundManager.Instance;
+        if (sound != null)
+        {
+            var wasLeaving = sound.BackToMainMenu;
+            sound.BackToMainMenu = false;
+            sound.SetState(Il2CppAK.STATES.STATE_GAME.GROUP, Il2CppAK.STATES.STATE_GAME.STATE.INGAME);
+            MelonLogger.Msg($"Restored in-game sound (sound manager was {(wasLeaving ? "" : "not ")}flagged as leaving, paused={sound.IsPaused}).");
+        }
+
+        var music = Il2CppTheGameBakers.Cairn.Music.MusicManager.Instance;
+        if (music != null)
+        {
+            music.SetMusic(Il2CppAK.STATES.STATE_MUSIC.STATE.NONE, false);
+        }
+    }
+
+    private static bool TryCloseGameOverMenu()
+    {
+        var menu = Object.FindObjectOfType<GameOverMenu>();
+        if (menu == null || !menu.IsOpened)
+        {
+            return false;
+        }
+
+        menu.Close(false);
+        MelonLogger.Msg(IsGameOver ? "Closed the game-over screen, but the game is still over." : "Closed the game-over screen.");
+        return true;
+    }
+
+    /// <summary>The screen can't close while it's still fading in, so wait for it. Time is stopped, so this counts real time.</summary>
+    private static IEnumerator CloseGameOverMenuWhenOpened()
+    {
+        var giveUp = Time.unscaledTime + 5f;
+        while (Time.unscaledTime < giveUp)
+        {
+            yield return null;
+            if (!IsGameOver)
+            {
+                yield break;
+            }
+
+            bool closed;
+            try
+            {
+                closed = TryCloseGameOverMenu();
+            }
+            catch (Exception e)
+            {
+                MelonLogger.Error($"Failed closing the game-over screen: {e}");
+                yield break;
+            }
+
+            if (closed)
+            {
+                yield break;
+            }
+        }
+
+        MelonLogger.Warning("The game-over screen never finished opening; the game may stay over (no sound, death music).");
     }
 
     private static bool TryWarp(Placement placement)
@@ -1151,10 +1243,17 @@ internal static class GameApi
         // The warp takes the ice gear off unless the point says to wear it, and sets the game's
         // "wear ice gear" flag to match. Free climb hands it out, so keep whatever she has.
         warpPoint.setIceEquipment = ShouldWearIceGear;
+        var reviving = IsGameOver;
         try
         {
             MelonLogger.Msg($"Warping Ava to {placement.Position} ({placement.Mode}).");
             freeRoam.WarpToPoint(warpPoint, (Disk.IOOperationCallback)new Action<bool>(_ => Object.Destroy(go)));
+            if (reviving)
+            {
+                // The warp has revived her by now; as the game's own retry does, close the screen after.
+                CloseGameOverMenu();
+            }
+
             return true;
         }
         catch (Exception e)
@@ -1172,6 +1271,7 @@ internal static class GameApi
     /// </summary>
     private static bool TryHop(Placement placement, out string reason)
     {
+        var revived = false;
         var switcher = Switcher;
         var climbing = switcher.climbingPawnController;
         var path = switcher.PathRecorder;
@@ -1185,6 +1285,7 @@ internal static class GameApi
             {
                 MelonLogger.Msg("Reviving Ava first.");
                 PawnManager.Instance.Respawn(PawnManager.RespawnMode.Revive, null);
+                revived = true;
             }
 
             if (path != null)
@@ -1234,6 +1335,11 @@ internal static class GameApi
             if (path != null)
             {
                 path.ResumePath();
+            }
+
+            if (revived)
+            {
+                CloseGameOverMenu();
             }
         }
 

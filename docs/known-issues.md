@@ -9,3 +9,7 @@ Teleporting to a start on steep rock puts Ava on the wall (climbing). The attemp
 - F7 with the editor closed doesn't reset the attempt. Pressing it mid-run carries the old state over: the clock keeps running from the previous start, and a red (off-route) or finished timer stays that way.
 
 Waiting on a redesign of route starts.
+
+## Taping fingers in the bivouac breaks the game
+
+Choosing the action that tapes Ava's fingers in the bivouac breaks the game. Not looked into yet.
