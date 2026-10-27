@@ -14,17 +14,24 @@ using Object = UnityEngine.Object;
 namespace CairnRouteMaker.Game;
 
 /// <summary>
-/// Adds a "Free Climb" button under "Story" on the title screen (MainMenuModeSelectElement). The
-/// button is a copy of the Story button with its localisation removed and its click replaced. It's
-/// added to the element's GetButtons() so controller navigation and the selection effects include it.
+/// Adds a "Free Climb" button under "Story" on the title screen (MainMenuModeSelectElement), and a
+/// "Loading Screen Art" button at the bottom of the Extras page (MainMenuExtraSelectElement). Each
+/// button is a copy of one of the page's own buttons with its localisation removed and its click
+/// replaced. It's added to the element's GetButtons() so controller navigation and the selection
+/// effects include it.
 /// </summary>
 internal static class MainMenuPatches
 {
     private const string ButtonName = "CairnRouteMaker.FreeClimbButton";
     private const string Label = "Free Climb";
+    private const string ArtButtonName = "CairnRouteMaker.LoadingArtButton";
+    private const string ArtLabel = "Loading Screen Art";
 
     /// <summary>The Free Climb button was pressed.</summary>
     public static event Action FreeClimbClicked;
+
+    /// <summary>The Extras page's Loading Screen Art button was pressed.</summary>
+    public static event Action LoadingArtClicked;
 
     /// <summary>The main menu has loaded (at startup, or after quitting a game).</summary>
     public static event Action MainMenuShown;
@@ -43,6 +50,12 @@ internal static class MainMenuPatches
             {
                 Run("adding the Free Climb button", () => EnsureButton(modeSelect));
             }
+
+            var extras = __instance.TryCast<MainMenuExtraSelectElement>();
+            if (extras != null)
+            {
+                Run("adding the Loading Screen Art button", () => EnsureArtButton(extras));
+            }
         }
     }
 
@@ -53,8 +66,10 @@ internal static class MainMenuPatches
         private static void Postfix() => Run("handling the main menu", () => MainMenuShown?.Invoke());
     }
 
-    /// <summary>While true, the menu's cancel action (B / Esc) is ignored.</summary>
-    public static Func<bool> SuppressCancel { get; set; }
+    private static readonly List<Func<bool>> CancelBlockers = new();
+
+    /// <summary>While any of these returns true, the menu's cancel action (B / Esc) is ignored.</summary>
+    public static void SuppressCancelWhile(Func<bool> blocked) => CancelBlockers.Add(blocked);
 
     /// <summary>
     /// The menu's cancel action, wired to the Input System directly, so blocking UI input doesn't stop
@@ -67,7 +82,15 @@ internal static class MainMenuPatches
         {
             try
             {
-                return SuppressCancel == null || !SuppressCancel();
+                foreach (var blocked in CancelBlockers)
+                {
+                    if (blocked())
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
             }
             catch (Exception e)
             {
@@ -86,6 +109,41 @@ internal static class MainMenuPatches
             Run("listing the Free Climb button", () => buttons = WithFreeClimb(__instance, buttons));
             __result = buttons;
         }
+    }
+
+    [HarmonyPatch(typeof(MainMenuExtraSelectElement), nameof(MainMenuExtraSelectElement.GetButtons))]
+    private static class ExtrasGetButtonsPatch
+    {
+        private static void Postfix(MainMenuExtraSelectElement __instance, ref Il2CppReferenceArray<Button> __result)
+        {
+            var buttons = __result;
+            Run("listing the Loading Screen Art button", () => buttons = WithArt(__instance, buttons));
+            __result = buttons;
+        }
+    }
+
+    /// <summary>The Extras page's buttons with ours added at the end, where it sits on screen.</summary>
+    private static Il2CppReferenceArray<Button> WithArt(MainMenuExtraSelectElement element, Il2CppReferenceArray<Button> buttons)
+    {
+        var art = EnsureArtButton(element);
+        if (art == null || buttons == null)
+        {
+            return buttons;
+        }
+
+        var list = new List<Button>();
+        foreach (var button in buttons)
+        {
+            if (button != null && button.Pointer == art.Pointer)
+            {
+                return buttons;
+            }
+
+            list.Add(button);
+        }
+
+        list.Add(art);
+        return new Il2CppReferenceArray<Button>(list.ToArray());
     }
 
     private static Il2CppReferenceArray<Button> WithFreeClimb(MainMenuModeSelectElement element, Il2CppReferenceArray<Button> buttons)
@@ -130,17 +188,54 @@ internal static class MainMenuPatches
             return null;
         }
 
-        var parent = story.transform.parent;
-        var existing = parent.Find(ButtonName);
+        var existing = story.transform.parent.Find(ButtonName);
         if (existing != null)
         {
             return existing.GetComponent<Button>();
         }
 
-        var copy = Object.Instantiate(story.gameObject, parent, false);
-        copy.name = ButtonName;
+        var button = CloneButton(story, ButtonName, Label, "opening Free Climb", () => FreeClimbClicked?.Invoke());
+        PlaceBelow(story, button.transform, element);
+        MelonLogger.Msg($"Added the Free Climb button under {story.name} (in {story.transform.parent.name}, layout group: {story.transform.parent.GetComponent<LayoutGroup>() != null}).");
+        LogPositions(story, element.summitModeButton, button, element.settingsButton, element.extrasButton, element.creditsButton, element.quitButton);
+        return button;
+    }
 
-        // The copy would otherwise translate itself back to "Story".
+    /// <summary>
+    /// Find the Extras page's Loading Screen Art button, creating it the first time: a copy of the
+    /// Deluxe PDF button, one row below the page's last button.
+    /// </summary>
+    private static Button EnsureArtButton(MainMenuExtraSelectElement element)
+    {
+        var pdf = element.deluxePDFButton;
+        Button tshirt = element.tshirtButton;
+        var template = pdf ?? tshirt;
+        if (template == null)
+        {
+            return null;
+        }
+
+        var existing = template.transform.parent.Find(ArtButtonName);
+        if (existing != null)
+        {
+            return existing.GetComponent<Button>();
+        }
+
+        var button = CloneButton(template, ArtButtonName, ArtLabel, "opening the loading screen art", () => LoadingArtClicked?.Invoke());
+        PlaceLast(button.transform, pdf, tshirt);
+        MelonLogger.Msg($"Added the Loading Screen Art button to Extras (copied from {template.name} in {template.transform.parent.name}, layout group: {template.transform.parent.GetComponent<LayoutGroup>() != null}).");
+        LogPositions(pdf, tshirt, button);
+        return button;
+    }
+
+    /// <summary>A copy of one of the menu's buttons, beside it, with its own label and click.</summary>
+    private static Button CloneButton(Button template, string name, string label, string what, Action onClick)
+    {
+        var copy = Object.Instantiate(template.gameObject, template.transform.parent, false);
+        copy.name = name;
+        copy.SetActive(true);
+
+        // The copy would otherwise translate itself back to the original's label.
         foreach (var localized in copy.GetComponentsInChildren<LocalizedText>(true))
         {
             Object.DestroyImmediate(localized);
@@ -148,24 +243,62 @@ internal static class MainMenuPatches
 
         foreach (var text in copy.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
-            text.text = Label;
+            text.text = label;
         }
 
         var button = copy.GetComponent<Button>();
         button.onClick = new Button.ButtonClickedEvent();
-        button.onClick.AddListener((UnityAction)(() => Run("opening Free Climb", () => FreeClimbClicked?.Invoke())));
+        button.onClick.AddListener((UnityAction)(() => Run(what, onClick)));
         button.interactable = true;
+        return button;
+    }
 
-        PlaceBelow(story, copy.transform, element);
-        MelonLogger.Msg($"Added the Free Climb button under {story.name} (in {parent.name}, layout group: {parent.GetComponent<LayoutGroup>() != null}).");
-        foreach (var other in new[] { story, element.summitModeButton, button, element.settingsButton, element.extrasButton, element.creditsButton, element.quitButton })
+    private static void LogPositions(params Button[] buttons)
+    {
+        foreach (var button in buttons)
         {
-            if (other != null)
+            if (button != null)
             {
-                MelonLogger.Msg($"  {other.name}: active={other.gameObject.activeSelf} at {other.GetComponent<RectTransform>().anchoredPosition}");
+                MelonLogger.Msg($"  {button.name}: active={button.gameObject.activeSelf} at {button.GetComponent<RectTransform>().anchoredPosition}");
             }
         }
-        return button;
+    }
+
+    /// <summary>
+    /// Put the copy one row below the lowest of <paramref name="others"/> that's showing. In a layout
+    /// group being the last sibling is enough.
+    /// </summary>
+    private static void PlaceLast(Transform copy, params Button[] others)
+    {
+        copy.SetAsLastSibling();
+        if (copy.parent.GetComponent<LayoutGroup>() != null)
+        {
+            return;
+        }
+
+        var shown = new List<RectTransform>();
+        foreach (var button in others)
+        {
+            if (button != null && button.gameObject.activeSelf && button.transform.parent == copy.parent)
+            {
+                shown.Add(button.GetComponent<RectTransform>());
+            }
+        }
+
+        if (shown.Count == 0)
+        {
+            return;
+        }
+
+        shown.Sort((a, b) => a.anchoredPosition.y.CompareTo(b.anchoredPosition.y));
+        var lowest = shown[0];
+        var row = shown.Count > 1 ? shown[1].anchoredPosition.y - lowest.anchoredPosition.y : lowest.rect.height;
+        if (row <= 0f)
+        {
+            row = lowest.rect.height;
+        }
+
+        copy.GetComponent<RectTransform>().anchoredPosition = lowest.anchoredPosition - new Vector2(0f, row);
     }
 
     /// <summary>

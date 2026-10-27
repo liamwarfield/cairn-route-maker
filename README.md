@@ -6,3 +6,4 @@ This my attempt at adding features that I want in the game SOO bad:
 
 1. Teleport to climbs.
 2. Create routes!
+3. Flip through the loading screen art, from a new entry in Extras.

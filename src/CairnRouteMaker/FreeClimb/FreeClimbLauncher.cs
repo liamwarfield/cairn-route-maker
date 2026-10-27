@@ -28,7 +28,7 @@ internal sealed class FreeClimbLauncher
     {
         _storage = storage;
         _session = session;
-        MainMenuPatches.SuppressCancel = () => _open || _unblockAtFrame >= 0;
+        MainMenuPatches.SuppressCancelWhile(() => _open || _unblockAtFrame >= 0);
     }
 
     public void Open()
