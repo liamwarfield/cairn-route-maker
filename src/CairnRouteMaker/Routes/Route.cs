@@ -40,14 +40,16 @@ public sealed class FinishZone
 
     /// <summary>
     /// Whether any part of the segment from Ava's root up through her body touches the sphere, so
-    /// the check doesn't depend on exactly where the game puts her root bone.
+    /// the check doesn't depend on exactly where the game puts her root bone. A
+    /// <paramref name="margin"/> grows the sphere by that much.
     /// </summary>
-    public bool Contains(Vector3 bottom, Vector3 top)
+    public bool Contains(Vector3 bottom, Vector3 top, float margin = 0f)
     {
         var segment = top - bottom;
         var lengthSquared = segment.LengthSquared();
         var t = lengthSquared > 0f ? System.Math.Clamp(Vector3.Dot(Position - bottom, segment) / lengthSquared, 0f, 1f) : 0f;
-        return Vector3.DistanceSquared(bottom + segment * t, Position) <= Radius * Radius;
+        var radius = Radius + margin;
+        return Vector3.DistanceSquared(bottom + segment * t, Position) <= radius * radius;
     }
 }
 

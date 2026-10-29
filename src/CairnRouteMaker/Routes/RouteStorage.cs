@@ -9,7 +9,8 @@ namespace CairnRouteMaker.Routes;
 /// <summary>
 /// Reads and writes route files in one directory. A zone can have any number of routes, one file
 /// each, named after the zone: "Kami_09_Well.json", then "Kami_09_Well-2.json" and so on. The
-/// zone a route belongs to is read from the file itself, not its name.
+/// zone a route belongs to is read from the file itself, not its name. The player's best times
+/// are kept next to the routes folder, in PersonalBests.json.
 /// </summary>
 public sealed class RouteStorage
 {
@@ -17,7 +18,16 @@ public sealed class RouteStorage
 
     private readonly string _directory;
 
-    public RouteStorage(string directory) => _directory = directory;
+    public RouteStorage(string directory)
+    {
+        _directory = directory;
+        Bests = new PersonalBests(Path.Combine(Parent, "PersonalBests.json"));
+    }
+
+    /// <summary>The best time on each route, by <see cref="Route.Id"/>.</summary>
+    public PersonalBests Bests { get; }
+
+    private string Parent => Path.GetDirectoryName(Path.GetFullPath(_directory)) ?? _directory;
 
     /// <summary>
     /// Every readable saved route, by zone and then in the order they were made; unreadable files
@@ -82,7 +92,8 @@ public sealed class RouteStorage
 
     /// <summary>
     /// Remove a route by moving its file to a Backups folder next to the routes folder, stamped
-    /// with the time, so a deletion can always be undone by moving the file back.
+    /// with the time, so a deletion can always be undone by moving the file back. Its best time is
+    /// forgotten, so a new route that gets its file name later doesn't start with it.
     /// </summary>
     /// <returns>Where the file went, or null if the route wasn't saved.</returns>
     public string Delete(Route route, DateTime now)
@@ -92,7 +103,9 @@ public sealed class RouteStorage
             return null;
         }
 
-        var backups = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_directory)) ?? _directory, "Backups");
+        // First: failing after the move would report a deleted route as kept.
+        Bests.Clear(route.Id);
+        var backups = Path.Combine(Parent, "Backups");
         Directory.CreateDirectory(backups);
         var backup = Path.Combine(backups, $"{route.Id}.{now:yyyyMMdd-HHmmss}.json");
         File.Move(PathFor(route.Id), backup, overwrite: true);

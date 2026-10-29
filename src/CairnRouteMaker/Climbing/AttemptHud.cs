@@ -6,7 +6,8 @@ using UnityEngine;
 namespace CairnRouteMaker.Climbing;
 
 /// <summary>
-/// The route timer in the top left and the next-grab indicator in the bottom right, drawn with IMGUI.
+/// The route timer in the top left, this attempt's time and then the route's personal best (zero
+/// until there is one), and the next-grab indicator in the bottom right, drawn with IMGUI.
 /// </summary>
 internal static class AttemptHud
 {
@@ -81,14 +82,15 @@ internal static class AttemptHud
         var label = (attempt.State, attempt.OffRoute) switch
         {
             (AttemptState.Ready, _) => "Ready - start climbing",
-            (AttemptState.Finished, false) => "Route complete!",
+            (AttemptState.Finished, false) => tracker.NewBest ? "New personal best!" : "Route complete!",
             (AttemptState.Finished, true) => "Finished, but failed to stay on route",
             (_, true) => "Failed to stay on route",
             _ when tracker.Route.Finish == null => "This route has no finish yet",
             _ => null,
         };
 
-        Outlined(new Rect(24, 16, 400, 48), Attempt.FormatTime(attempt.Elapsed(Time.timeAsDouble)), _timerStyle, color);
+        var time = $"{Attempt.FormatTime(attempt.Elapsed(Time.timeAsDouble))} / {Attempt.FormatTime(tracker.Best ?? 0)}";
+        Outlined(new Rect(24, 16, 640, 48), time, _timerStyle, color);
         if (label != null)
         {
             Outlined(new Rect(26, 62, 400, 28), label, _labelStyle, color);

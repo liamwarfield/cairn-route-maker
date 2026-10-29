@@ -26,7 +26,7 @@ public sealed class RouteMakerMod : MelonMod
     private RouteOverlay _overlay;
     private RouteEditor _editor;
     private readonly Traveler _traveler = new();
-    private readonly AttemptTracker _attempt = new();
+    private AttemptTracker _attempt;
     private FreeClimbSession _session;
     private FreeClimbLauncher _launcher;
     private readonly LoadingArtGallery _gallery = new();
@@ -39,6 +39,7 @@ public sealed class RouteMakerMod : MelonMod
         PaintColors.Load();
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
+        _attempt = new AttemptTracker(_storage.Bests);
         ModControls.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Controls.json"));
         _session = new FreeClimbSession(_traveler);
         _session.Started += OnFreeClimbStarted;
@@ -224,8 +225,10 @@ public sealed class RouteMakerMod : MelonMod
         }
         else if (ModControls.GoToStart.KeyPressed)
         {
+            // Going back to the start is how to give up on an attempt and try again.
             EnsureEditor();
             _editor.PlayTest();
+            _attempt.Reset();
         }
         else if (ModControls.ToggleFreecam.KeyPressed)
         {
