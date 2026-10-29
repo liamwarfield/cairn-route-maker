@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
 using UnityEngine;
 using NVector3 = System.Numerics.Vector3;
@@ -59,6 +60,13 @@ internal sealed class FinishMarker
     private const float BeaconFullFlat = 0.8f;
 
     /// <summary>
+    /// Under an overhang the beam stops this far below the rock above it, and is left out if that
+    /// leaves less than <see cref="MinBeaconHeight"/>.
+    /// </summary>
+    private const float CeilingGap = 0.2f;
+    private const float MinBeaconHeight = 2f;
+
+    /// <summary>
     /// The cairn's stones from the bottom up, for a 1 m finish: the centre (x, height above the
     /// cairn's foot), the ellipsoid's half-sizes (a across, b high, c deep) and a turn about the vertical.
     /// </summary>
@@ -99,6 +107,10 @@ internal sealed class FinishMarker
     private FinishZone _finish;
     private float _padRadius = -1f;
     private int _checks;
+
+    /// <summary>Where the beam rises from, relative to the finish point, and how tall it can be there.</summary>
+    private NVector3 _beaconFoot;
+    private float _beaconHeight;
 
     public FinishMarker(Transform parent, DecalPaint paint)
     {
@@ -201,15 +213,11 @@ internal sealed class FinishMarker
             _mesh.Set(_sphere.Length + i, point, GlowMesh.Paint(StoneColor * lit, (0.5f + 0.3f * rim) * breath, (0.1f + 0.4f * rim) * breath));
         }
 
-        // The beam rises from the top of the bubble's open side, which on sloping rock is out from
-        // the rock rather than on it.
-        var rise = NVector3.UnitY + up;
-        var beaconFoot = (rise.LengthSquared() > 0.25f ? NVector3.Normalize(rise) : NVector3.UnitY) * radius;
-        var toAxis = eye - beaconFoot;
+        var toAxis = eye - _beaconFoot;
         toAxis.Y = 0f;
-        var beacon = breath * GlowMesh.Smoothstep(NearFadeStart, NearFadeEnd, toAxis.Length())
+        var beacon = _beaconHeight <= 0f ? 0f : breath * GlowMesh.Smoothstep(NearFadeStart, NearFadeEnd, toAxis.Length())
             * GlowMesh.Smoothstep(BeaconSteepest, BeaconFullFlat, up.Y);
-        _mesh.SetBeam(_beamFirst, beaconFoot, BeaconHeight, BeaconHalfWidth, eye, Color, BeaconTint * beacon, BeaconGlow * beacon);
+        _mesh.SetBeam(_beamFirst, _beaconFoot, MathF.Max(_beaconHeight, 0.01f), BeaconHalfWidth, eye, Color, BeaconTint * beacon, BeaconGlow * beacon);
         _mesh.EndFrame();
         _pad.SetBrightness(GlowMesh.Breath(time, 0.3f));
     }
@@ -223,6 +231,28 @@ internal sealed class FinishMarker
         var wall = _rock.Climbing;
         _pad.Place(_finish.Position, _rock.Normal, NVector3.UnitZ, MathF.Max(wall ? 1.6f : 1f, 0.6f * _finish.Radius), wall ? 0.25f : 0.5f);
         _mesh.Position = RouteOverlay.ToUnity(_finish.Position);
+
+        // The beam rises from the top of the bubble's open side, which on sloping rock is out from
+        // the rock rather than on it.
+        var rise = NVector3.UnitY + _rock.Normal;
+        _beaconFoot = (rise.LengthSquared() > 0.25f ? NVector3.Normalize(rise) : NVector3.UnitY) * _finish.Radius;
+        _beaconHeight = BeaconRoom(_finish.Position + _beaconFoot);
+    }
+
+    /// <summary>
+    /// How tall the beam can be under any rock overhead. Rock only hides the beam where it's in front
+    /// of it, so a beam through a roof would carry on above the cliff, where it looks like the finish
+    /// is up there. 0 if the roof is too close for a beam at all.
+    /// </summary>
+    private static float BeaconRoom(NVector3 foot)
+    {
+        if (!Physics.Raycast(RouteOverlay.ToUnity(foot), Vector3.up, out var hit, BeaconHeight, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore))
+        {
+            return BeaconHeight;
+        }
+
+        var room = hit.distance - CeilingGap;
+        return room >= MinBeaconHeight ? room : 0f;
     }
 
     /// <summary>The fresnel term: 0 where the surface faces the eye, 1 where it's seen edge-on.</summary>
