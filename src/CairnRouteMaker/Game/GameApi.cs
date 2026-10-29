@@ -32,6 +32,8 @@ internal static class GameApi
     private static float _savedTitleMenuAlpha;
     private static UnityEngine.UI.Image _hiddenTitleArrow;
     private static bool _savedTitleArrowEnabled;
+    private static readonly List<Canvas> _hiddenHudCanvases = new();
+    private static float _nextHudSearch;
 
     /// <summary>Rock, holds and ground: what the brush and start marker can land on.</summary>
     public static int SurfaceMask
@@ -914,6 +916,69 @@ internal static class GameApi
 
         _hiddenTitleMenu = null;
         _hiddenTitleArrow = null;
+    }
+
+    /// <summary>
+    /// Hide the game's HUD (status, quick inventory and the map reminder in the bottom left)
+    /// while the editor is open: its controls don't work there, and it would sit under the
+    /// editor's help. Call every frame while it should stay hidden, after the game's updates, in
+    /// case the game turns a canvas back on; it looks for the canvases again once a second.
+    /// </summary>
+    public static void HideGameHud(bool hide)
+    {
+        if (!hide)
+        {
+            foreach (var canvas in _hiddenHudCanvases)
+            {
+                if (canvas != null)
+                {
+                    canvas.enabled = true;
+                }
+            }
+
+            _hiddenHudCanvases.Clear();
+            _nextHudSearch = 0f;
+            return;
+        }
+
+        if (Time.unscaledTime >= _nextHudSearch)
+        {
+            _nextHudSearch = Time.unscaledTime + 1f;
+            try
+            {
+                AddHudCanvas(Object.FindFirstObjectByType<GameHud>()?.canvas);
+                var reminder = Object.FindFirstObjectByType<EagleEyeReminderHud>();
+                AddHudCanvas(reminder != null ? reminder.GetComponentInParent<Canvas>() : null);
+            }
+            catch (Exception e)
+            {
+                MelonLogger.Warning($"Couldn't find the game's HUD to hide it: {e.Message}");
+            }
+        }
+
+        foreach (var canvas in _hiddenHudCanvases)
+        {
+            if (canvas != null && canvas.enabled)
+            {
+                canvas.enabled = false;
+            }
+        }
+    }
+
+    /// <summary>Remember a HUD canvas to hide, if it's showing and not already listed.</summary>
+    private static void AddHudCanvas(Canvas canvas)
+    {
+        if (canvas == null || !canvas.enabled)
+        {
+            return;
+        }
+
+        // Each lookup gets a new wrapper object, so compare the objects underneath.
+        var id = canvas.GetInstanceID();
+        if (!_hiddenHudCanvases.Exists(hidden => hidden != null && hidden.GetInstanceID() == id))
+        {
+            _hiddenHudCanvases.Add(canvas);
+        }
     }
 
     /// <summary>

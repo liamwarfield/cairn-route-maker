@@ -330,6 +330,18 @@ Read by disassembly (`GameAssembly.dll`; RVAs from the Cpp2IL stubs). The mod's 
   - It answers made-up loc keys in a `LocalizationManager.Get` prefix.
   - It saves its rebinds to `UserData/CairnRouteMaker/Controls.json` from a `RebindSheet.OnRebind` postfix.
 
+## Button pictures (control hints)
+
+Read from the interop assemblies (`Il2CppTheGameBakers.TGBTools.InputImage.Runtime.dll`) and from `inputimage_assets_all.bundle` with UnityPy. The mod's use of it is untested in game.
+
+- **Data:** `TGBTools.InputImage.InputImageManager` (a `TGBTools.Singleton<T>`, not a MonoBehaviour: check `IsAvailable()` and `IsReady`) loads one `InputImageData` per device type through Addressables into `inputImagesData`. **sig**
+  - Each has `deviceFullType` (`UnityEngine.InputSystem.Gamepad`, `.Keyboard`, `.Mouse`, `.DualShock.DualShockGamepad`, `.DualShock.DualSenseGamepadHID`, `.PS5.DualSenseGamepad`, `.PS5.DualSenseGamepadPC`) and `contextualSprites`.
+  - Each `ContextualData` has a `context` (`InputImageContextStringId.value`) and `pathsData`. Context 0 holds the light pictures (pale buttons, dark letters, as drawn over the world); context 1 holds dark ones.
+  - Each `PathData` has a `relativePath` such as `/buttonSouth`, `/dpad/left`, `/leftShift` or `/scroll`, and `spriteVariants` (`variant.value`, `sprite`). Variant 0 is the plain picture. Others are animation frames (sticks, 1–12) and D-pad left-and-right (14).
+- **What's covered:** the generic `Gamepad` has the Xbox pictures. The PlayStation types have their own, but some are empty (`/start`), so fall back to `Gamepad`. The keyboard has pictures only for wide keys (Shift, Ctrl, Alt, Tab, Esc, Enter, Backspace, Space), the arrows and F1/F6/F12. Every other key uses `/Fallback`, a blank key cap (`Key_Blank_Light`, 60×60), which the game's `InputImageStatic` writes the key's name on with its `textMesh`. The letters on the pictures are `#393C39`.
+- **The sprites themselves** live in `tgbtextures_assets_all.bundle` (one texture each), which the inputimage bundle depends on.
+- **What the mod does** (`Game/ButtonGlyphs.cs`, `Editor/ControlsHud.cs`): it walks `inputImagesData` itself for context 0, variant 0. For a pad it tries the types of `Gamepad.current` (`GetIl2CppType()` and its base types) before the generic `Gamepad`. It gets a binding's layout and control path from `GetBindingDisplayString(action, 0, out layout, out path)`.
+
 ## Settings menu
 
 Read by disassembly and a hierarchy dump at runtime. The mod's Routes tab is confirmed in game, on the title screen and in the pause menu, and its page has been opened and closed from it without errors.
