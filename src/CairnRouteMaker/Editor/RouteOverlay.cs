@@ -11,15 +11,13 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// Draws a route in the world: the painted strokes (as decals, see <see cref="DecalPaint"/>),
-/// the route lines (see <see cref="RouteLine"/>), the start and finish markers and the brush preview. Nothing here has a collider, so neither the brush
+/// the route lines (see <see cref="RouteLine"/>), the start and finish markers (see <see cref="StartMarker"/>
+/// and <see cref="FinishMarker"/>) and the brush preview. Nothing here has a collider, so neither the brush
 /// nor Ava's grab checks can hit it.
 /// </summary>
 internal sealed class RouteOverlay
 {
     private const int IgnoreRaycastLayer = 2;
-
-    private static readonly Color StartColor = new(0.2f, 0.9f, 0.4f, 0.6f);
-    private static readonly Color FinishColor = new(0.25f, 0.6f, 1f, 0.3f);
 
     // Strong enough to read through the game's colour grading; erase is black so it can't be
     // mistaken for deny. Allow and deny take the paint colours (see PaintColors).
@@ -36,14 +34,13 @@ internal sealed class RouteOverlay
     private int _activeLine = -1;
     private bool _editingLine;
     private int _strokeCount;
-    private readonly GameObject _start;
-    private readonly GameObject _finish;
+    private readonly StartMarker _start;
+    private readonly FinishMarker _finish;
     private readonly GameObject _brush;
-    private Material _startMaterial;
-    private Material _finishMaterial;
     private Material[] _brushMaterials;
     private Material _markerMaterial;
     private bool _visible = true;
+    private int _paintRegistrations;
 
     public RouteOverlay()
     {
@@ -57,11 +54,8 @@ internal sealed class RouteOverlay
         ApplyPaintColors();
         PaintColors.Changed += ApplyPaintColors;
 
-        _start = CreateStartMarker();
-        _start.SetActive(false);
-
-        _finish = CreatePrimitive(PrimitiveType.Sphere, _finishMaterial, "Finish");
-        _finish.SetActive(false);
+        _start = new StartMarker(_root.transform, _paint);
+        _finish = new FinishMarker(_root.transform, _paint);
 
         _brush = CreatePrimitive(PrimitiveType.Sphere, _brushMaterials[0], "Brush");
         _brush.SetActive(false);
@@ -74,6 +68,11 @@ internal sealed class RouteOverlay
         {
             _visible = value;
             _root.SetActive(value);
+            if (value)
+            {
+                // Everything under the overlay just registered again, in no promised order.
+                DrawMarkersOnTop();
+            }
         }
     }
 
@@ -110,12 +109,41 @@ internal sealed class RouteOverlay
     {
         _paint.Flush();
         _paint.Animate(Time.unscaledTime);
+        if (_paint.Registrations != _paintRegistrations)
+        {
+            DrawMarkersOnTop();
+        }
     }
 
-    /// <summary>Lay the route lines out for the camera; call after the camera has moved for the frame.</summary>
+    /// <summary>
+    /// Re-register the start and finish rings after the paint, so the paint doesn't cover them: the
+    /// game draws decals in the order they register, and paint decals come and go as it's drawn.
+    /// </summary>
+    private void DrawMarkersOnTop()
+    {
+        _paintRegistrations = _paint.Registrations;
+        _start.DrawOnTop();
+        _finish.DrawOnTop();
+    }
+
+    /// <summary>Lay the route lines and markers out for the camera; call after the camera has moved for the frame.</summary>
     public void LateUpdate()
     {
         var camera = Camera.main;
+        var time = Time.unscaledTime;
+        try
+        {
+            _start.Update(camera, time);
+            _finish.Update(camera, time);
+        }
+        catch (Exception e)
+        {
+            // As with a line: hide the markers until the next change instead of logging every frame.
+            MelonLogger.Error($"Drawing the start and finish markers failed: {e}");
+            _start.Set(null);
+            _finish.Set(null);
+        }
+
         for (var i = 0; i < _lineCount; i++)
         {
             try
@@ -228,30 +256,10 @@ internal sealed class RouteOverlay
         _paint.RemoveStroke(_strokeCount);
     }
 
-    public void SetStart(StartPosition start)
-    {
-        _start.SetActive(start != null);
-        if (start == null)
-        {
-            return;
-        }
-
-        _start.transform.position = ToUnity(start.Position);
-        _start.transform.rotation = Quaternion.Euler(0f, start.YawDegrees, 0f);
-    }
+    public void SetStart(StartPosition start) => _start.Set(start);
 
     /// <summary>The finish zone, drawn as the sphere Ava has to reach.</summary>
-    public void SetFinish(FinishZone finish)
-    {
-        _finish.SetActive(finish != null);
-        if (finish == null)
-        {
-            return;
-        }
-
-        _finish.transform.position = ToUnity(finish.Position);
-        _finish.transform.localScale = Vector3.one * finish.Radius * 2f;
-    }
+    public void SetFinish(FinishZone finish) => _finish.Set(finish);
 
     /// <summary>A translucent sphere the size of the brush, tinted by mode.</summary>
     public void ShowBrush(Vector3 position, float radius, StrokeMode mode) => ShowSphere(position, radius, _brushMaterials[(int)mode]);
@@ -273,25 +281,6 @@ internal sealed class RouteOverlay
 
     public static NVector3 ToNumerics(Vector3 v) => new(v.x, v.y, v.z);
 
-    private GameObject CreateStartMarker()
-    {
-        // A body-height capsule standing on the start point, with a nose showing which way Ava faces.
-        var marker = new GameObject("Start");
-        marker.layer = IgnoreRaycastLayer;
-        marker.transform.SetParent(_root.transform, false);
-
-        var body = CreatePrimitive(PrimitiveType.Capsule, _startMaterial, "Body");
-        body.transform.SetParent(marker.transform, false);
-        body.transform.localPosition = new Vector3(0f, 0.85f, 0f);
-        body.transform.localScale = new Vector3(0.5f, 0.85f, 0.5f);
-
-        var nose = CreatePrimitive(PrimitiveType.Cube, _startMaterial, "Facing");
-        nose.transform.SetParent(marker.transform, false);
-        nose.transform.localPosition = new Vector3(0f, 1.4f, 0.35f);
-        nose.transform.localScale = new Vector3(0.15f, 0.15f, 0.4f);
-        return marker;
-    }
-
     private GameObject CreatePrimitive(PrimitiveType type, Material material, string name)
     {
         var go = GameObject.CreatePrimitive(type);
@@ -308,8 +297,6 @@ internal sealed class RouteOverlay
 
     private void CreateMaterials()
     {
-        _startMaterial = CreateMaterial(StartColor);
-        _finishMaterial = CreateMaterial(FinishColor);
         // Allow and deny are tinted by ApplyPaintColors.
         _brushMaterials = new[] { CreateMaterial(Color.clear), CreateMaterial(Color.clear), CreateMaterial(BrushEraseColor) };
         _markerMaterial = CreateMaterial(MarkerColor);

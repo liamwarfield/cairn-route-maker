@@ -228,6 +228,13 @@ internal sealed class DecalPaint
         }
     }
 
+    /// <summary>
+    /// Goes up whenever paint decals register with the game's decal system. Decals draw in the order
+    /// they register, so anything that has to draw over the paint (the start and finish rings)
+    /// registers again after this changes.
+    /// </summary>
+    public int Registrations { get; private set; }
+
     /// <summary>Show or hide the fill and the edge glow. Glow textures are only drawn while it shows.</summary>
     public void SetStyle(bool fill, bool glow)
     {
@@ -235,6 +242,10 @@ internal sealed class DecalPaint
         var glowShown = glow && !_glow;
         _fill = fill;
         _glow = glow;
+        if (fillShown || glowShown)
+        {
+            Registrations++;
+        }
         foreach (var cell in _cells.Values)
         {
             if (cell.GameObject == null)
@@ -1119,6 +1130,7 @@ internal sealed class DecalPaint
         }
 
         cell.GameObject.SetActive(true);
+        Registrations++;
         return true;
     }
 
@@ -1126,7 +1138,7 @@ internal sealed class DecalPaint
     /// A TGBDecal with its own material and texture, left inactive: the decal registers itself
     /// with the game's decal system in OnEnable, so callers activate it once it's positioned.
     /// </summary>
-    private (GameObject, TGBDecal, Material, Texture2D)? CreateDecal(string name, Material baseMaterial, Transform parent)
+    private (GameObject, TGBDecal, Material, Texture2D)? CreateDecal(string name, Material baseMaterial, Transform parent, int resolution = Resolution)
     {
         if (baseMaterial == null)
         {
@@ -1139,7 +1151,7 @@ internal sealed class DecalPaint
             return null;
         }
 
-        var texture = RuntimeAssets.Keep(new Texture2D(Resolution, Resolution, TextureFormat.RGBA32, false)
+        var texture = RuntimeAssets.Keep(new Texture2D(resolution, resolution, TextureFormat.RGBA32, false)
         {
             wrapMode = TextureWrapMode.Clamp,
             filterMode = FilterMode.Bilinear,
@@ -1165,6 +1177,13 @@ internal sealed class DecalPaint
         decal.lifetimeOpacityMul = 1f;
         return (go, decal, material, texture);
     }
+
+    /// <summary>
+    /// A decal apart from the paint (a start or finish marker's pad), lit and glowing like the paint's edges,
+    /// with a blank square texture of its own. Left inactive, like <see cref="CreateDecal"/>.
+    /// </summary>
+    public (GameObject GameObject, TGBDecal Decal, Material Material, Texture2D Texture)? CreateGlowDecal(string name, Transform parent, int resolution) =>
+        CreateDecal(name, GlowBaseMaterial(), parent, resolution);
 
     /// <summary>The paint material, drawing its texture as emission too.</summary>
     private Material GlowBaseMaterial()

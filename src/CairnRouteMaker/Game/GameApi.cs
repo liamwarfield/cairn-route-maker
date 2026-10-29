@@ -993,20 +993,14 @@ internal static class GameApi
     /// </summary>
     public static Placement PlaceAva(Vector3 point, RaycastHit hit, float yawDegrees)
     {
-        var layer = hit.collider == null ? GroundLayer : hit.collider.gameObject.layer;
-        if (layer == ClimbingHoldsLayer)
+        if (!TryStartSurface(point, ref hit, out var layer))
         {
-            if (!TryProbeSurface(point, 1 << ClimbingWallLayer, HoldDepth, out hit))
-            {
-                MelonLogger.Msg($"No wall behind the hold at {point}; Ava arrives on her feet.");
-                return Standing(point, yawDegrees);
-            }
-
-            layer = ClimbingWallLayer;
+            MelonLogger.Msg($"No wall behind the hold at {point}; Ava arrives on her feet.");
+            return Standing(point, yawDegrees);
         }
 
         var normal = hit.normal;
-        if (layer != ClimbingWallLayer || normal.y >= MinGroundNormalY)
+        if (!IsClimbed(layer, normal))
         {
             return Standing(point, yawDegrees);
         }
@@ -1017,6 +1011,82 @@ internal static class GameApi
         var rotation = facing.sqrMagnitude > 0.01f ? Quaternion.LookRotation(facing.normalized, Vector3.up) : Quaternion.Euler(0f, yawDegrees, 0f);
         return new Placement(hit.point + normal * WallStandOff, rotation, PawnControllerSwitcher.Mode.Climbing);
     }
+
+    /// <summary>
+    /// The rock a route's start or finish sits on, found the way <see cref="PlaceAva(Vector3, float)"/>
+    /// finds it but without logging, for drawing their markers: its outward normal (the wall's, for a
+    /// point on a hold) and whether Ava would start there climbing. False while that rock isn't loaded.
+    /// </summary>
+    public static bool TryFindRock(Vector3 point, out Vector3 normal, out bool climbing)
+    {
+        normal = Vector3.up;
+        climbing = false;
+        if (!TryProbeSurface(point, SurfaceMask, SurfaceProbeTolerance, out var hit))
+        {
+            return false;
+        }
+
+        // A hold with no wall behind it: she stands, so draw it as ground.
+        if (TryStartSurface(point, ref hit, out var layer))
+        {
+            normal = hit.normal;
+            climbing = IsClimbed(layer, normal);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The general facing of the rock across a disc of <paramref name="radius"/> around
+    /// <paramref name="point"/>, as seen from along <paramref name="axis"/>: the average normal of
+    /// the rock hit by rays cast back along it across the disc. The face at the point itself can be
+    /// one facet of a crack or a knob, facing anywhere. Gives <paramref name="axis"/> if no ray hits.
+    /// </summary>
+    public static Vector3 AverageRockNormal(Vector3 point, Vector3 axis, float radius)
+    {
+        var across = Vector3.Cross(axis, Mathf.Abs(axis.y) < 0.9f ? Vector3.up : Vector3.right).normalized;
+        var along = Vector3.Cross(axis, across);
+
+        // Rays start well in front of the disc and give up a radius behind it, so rock far behind a
+        // drop-off doesn't count.
+        var reach = radius + 0.5f;
+        var sum = Vector3.zero;
+        foreach (var (ring, count) in new[] { (0f, 1), (0.5f, 8), (1f, 12) })
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var angle = 2f * Mathf.PI * i / count;
+                var offset = (across * Mathf.Cos(angle) + along * Mathf.Sin(angle)) * (ring * radius);
+                if (Physics.Raycast(point + offset + axis * reach, -axis, out var hit, reach + radius, SurfaceMask, QueryTriggerInteraction.Ignore)
+                    && Vector3.Dot(hit.normal, axis) > 0.2f)
+                {
+                    sum += hit.normal;
+                }
+            }
+        }
+
+        return sum.sqrMagnitude > 1e-4f ? sum.normalized : axis;
+    }
+
+    /// <summary>
+    /// The surface that decides how Ava starts at <paramref name="point"/>, and its layer. A hold's
+    /// own faces say nothing about the slope of the wall it's on, so for a hold
+    /// <paramref name="hit"/> becomes the wall behind it; false if there isn't one.
+    /// </summary>
+    private static bool TryStartSurface(Vector3 point, ref RaycastHit hit, out int layer)
+    {
+        layer = hit.collider == null ? GroundLayer : hit.collider.gameObject.layer;
+        if (layer != ClimbingHoldsLayer)
+        {
+            return true;
+        }
+
+        layer = ClimbingWallLayer;
+        return TryProbeSurface(point, 1 << ClimbingWallLayer, HoldDepth, out hit);
+    }
+
+    /// <summary>Only ClimbingWall is climbed: steep Ground is somewhere she walks or slides.</summary>
+    private static bool IsClimbed(int layer, Vector3 normal) => layer == ClimbingWallLayer && normal.y < MinGroundNormalY;
 
     private static Placement Standing(Vector3 point, float yawDegrees) =>
         new(point, Quaternion.Euler(0f, yawDegrees, 0f), PawnControllerSwitcher.Mode.Walking);
