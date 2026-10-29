@@ -29,8 +29,11 @@ public class AttemptTests
         return route;
     }
 
-    private static void Step(Attempt attempt, Route route, double now, Vector3 position, bool climbing) =>
-        attempt.Update(route, now, position, position + Up, climbing);
+    /// <summary>Where a teleport to a start 2 m up the wall puts her root, 0.3 m off the rock.</summary>
+    private static readonly Vector3 OnWallStart = new(0, 2, 0.7f);
+
+    private static void Step(Attempt attempt, Route route, double now, Vector3 position, bool climbing, bool reaching = false) =>
+        attempt.Update(route, now, position, position + Up, climbing, reaching);
 
     [Fact]
     public void TimesAClimbFromLeavingTheGroundToTheFinish()
@@ -210,6 +213,115 @@ public class AttemptTests
         Assert.Equal(AttemptState.Idle, fresh.State);
         Step(fresh, route, 1, new Vector3(0, 9, 1.5f), climbing: true);
         Assert.Equal(AttemptState.Idle, fresh.State);
+    }
+
+    [Fact]
+    public void ATeleportOntoTheWallWaitsThereForHerFirstMove()
+    {
+        var route = WallRoute();
+        var attempt = new Attempt();
+        attempt.Teleported(OnWallStart, onWall: true, now: 0);
+
+        // Still where she was before the warp lands.
+        Step(attempt, route, 0.5, new Vector3(0, 7, 0.7f), climbing: true);
+        Assert.Equal(AttemptState.Idle, attempt.State);
+
+        Step(attempt, route, 1, OnWallStart, climbing: true);
+        Assert.Equal(AttemptState.Ready, attempt.State);
+        Assert.True(attempt.ArmedOnWall);
+
+        // The holds she lands on aren't painted, but she hasn't started yet.
+        Assert.False(attempt.OnGrab(route, new Vector3(4, 2, 1)));
+        Step(attempt, route, 3, OnWallStart, climbing: true);
+        Assert.Equal(AttemptState.Ready, attempt.State);
+
+        Step(attempt, route, 4, OnWallStart, climbing: true, reaching: true);
+        Assert.Equal(AttemptState.Climbing, attempt.State);
+        Assert.False(attempt.ArmedOnWall);
+        Assert.True(attempt.OnGrab(route, new Vector3(4, 3, 1)));
+
+        Step(attempt, route, 20, new Vector3(0, 9.5f, 1), climbing: true);
+        Assert.Equal(AttemptState.Finished, attempt.State);
+        Assert.Equal(16, attempt.Elapsed(100));
+    }
+
+    [Fact]
+    public void LeavingTheGroundForTheWallByTeleportIsNotAStart()
+    {
+        var route = WallRoute();
+        var attempt = new Attempt();
+        Step(attempt, route, 0, new Vector3(3, 0, -2), climbing: false);
+        Assert.Equal(AttemptState.Ready, attempt.State);
+
+        attempt.Teleported(OnWallStart, onWall: true, now: 1);
+        Step(attempt, route, 1.1, new Vector3(3, 0, -2), climbing: false);
+        Step(attempt, route, 1.2, OnWallStart, climbing: true);
+
+        Assert.Equal(AttemptState.Ready, attempt.State);
+        Assert.True(attempt.ArmedOnWall);
+    }
+
+    [Fact]
+    public void AReachUnderWayWhenSheWasSentIsNotHerFirstMove()
+    {
+        var route = WallRoute();
+        var attempt = new Attempt();
+        attempt.Teleported(OnWallStart, onWall: true, now: 0);
+
+        Step(attempt, route, 1, OnWallStart, climbing: true, reaching: true);
+        Assert.Equal(AttemptState.Idle, attempt.State);
+
+        Step(attempt, route, 2, OnWallStart, climbing: true);
+        Assert.Equal(AttemptState.Ready, attempt.State);
+    }
+
+    [Fact]
+    public void ATeleportStartsAFreshGo()
+    {
+        var route = WallRoute();
+        var attempt = new Attempt();
+        Step(attempt, route, 0, Vector3.Zero, climbing: false);
+        Step(attempt, route, 1, Vector3.Zero, climbing: true);
+        attempt.OnGrab(route, new Vector3(4, 3, 1));
+
+        attempt.Teleported(Vector3.Zero, onWall: false, now: 5);
+        Assert.Equal(AttemptState.Idle, attempt.State);
+        Assert.False(attempt.OffRoute);
+
+        Step(attempt, route, 6, Vector3.Zero, climbing: false);
+        Assert.Equal(AttemptState.Ready, attempt.State);
+    }
+
+    [Fact]
+    public void StopsWaitingForATeleportThatNeverLands()
+    {
+        var route = WallRoute();
+        var attempt = new Attempt();
+        attempt.Teleported(OnWallStart, onWall: true, now: 0);
+
+        Step(attempt, route, Attempt.ArrivalTimeout + 1, new Vector3(0, 7, 0.7f), climbing: true);
+        Assert.False(attempt.Arriving);
+        Assert.Equal(AttemptState.Idle, attempt.State);
+
+        Step(attempt, route, 20, new Vector3(3, 0, -2), climbing: false);
+        Step(attempt, route, 21, new Vector3(3, 0.5f, -1), climbing: true);
+        Assert.Equal(AttemptState.Climbing, attempt.State);
+    }
+
+    [Fact]
+    public void OffTheWallBeforeHerFirstMoveSheStartsFromTheGroundAgain()
+    {
+        var route = WallRoute();
+        var attempt = new Attempt();
+        attempt.Teleported(OnWallStart, onWall: true, now: 0);
+        Step(attempt, route, 1, OnWallStart, climbing: true);
+
+        Step(attempt, route, 2, new Vector3(0, 0, 0.5f), climbing: false);
+        Assert.Equal(AttemptState.Ready, attempt.State);
+        Assert.False(attempt.ArmedOnWall);
+
+        Step(attempt, route, 3, new Vector3(0, 0.5f, 0.7f), climbing: true);
+        Assert.Equal(AttemptState.Climbing, attempt.State);
     }
 
     [Fact]

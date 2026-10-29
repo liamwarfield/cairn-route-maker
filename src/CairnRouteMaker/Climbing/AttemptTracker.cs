@@ -47,6 +47,9 @@ internal sealed class AttemptTracker
     private Route _route;
     private bool _broken;
 
+    /// <summary>Where the last teleport sent her, for the log.</summary>
+    private System.Numerics.Vector3 _sentTo;
+
     public AttemptTracker(PersonalBests bests) => _bests = bests;
 
     public Attempt Attempt { get; } = new();
@@ -69,6 +72,20 @@ internal sealed class AttemptTracker
         NextGrab = NextGrabStatus.Hidden;
         Array.Clear(_previous);
         Array.Clear(_predicted);
+    }
+
+    /// <summary>
+    /// A teleport starts a fresh go at <paramref name="route"/>, the route on show, and one onto the
+    /// wall waits there for her first move. The route is taken now because it may have only just been
+    /// picked (starting free climb, or in the level select): left for <see cref="Update"/> to notice,
+    /// the change would reset the attempt again and forget the teleport.
+    /// </summary>
+    public void OnTeleported(GameApi.Placement placement, Route route)
+    {
+        _route = route;
+        Reset();
+        _sentTo = RouteOverlay.ToNumerics(placement.Position);
+        Attempt.Teleported(_sentTo, placement.Mode == Il2Cpp.PawnControllerSwitcher.Mode.Climbing, Time.timeAsDouble);
     }
 
     public void Update(Route route)
@@ -120,10 +137,17 @@ internal sealed class AttemptTracker
 
         var root = RouteOverlay.ToNumerics(position);
         var top = root + System.Numerics.Vector3.UnitY * BodyHeight;
-        if (Attempt.Update(route, now, root, top, climbing))
+        var reaching = climbing && Array.Exists(_grips, grip => grip.Reaching);
+        var arriving = Attempt.Arriving;
+        if (Attempt.Update(route, now, root, top, climbing, reaching))
         {
             NewBest = Attempt.State == AttemptState.Finished && RecordBest(route, Attempt.Elapsed(now));
-            LogState(now);
+            LogState(root, now);
+        }
+        else if (arriving && !Attempt.Arriving)
+        {
+            MelonLogger.Warning($"Ava didn't land on the wall where she was sent (she's {System.Numerics.Vector3.Distance(root, _sentTo):0.00} m from it, "
+                + $"{(climbing ? "climbing" : "not climbing")}). The timer starts the next time she climbs from the ground.");
         }
 
         if (!wasClimbing)
@@ -214,10 +238,13 @@ internal sealed class AttemptTracker
         MelonLogger.Msg($"Grab landed {miss:0.00} m from the predicted spot ({(predicted.FromGame ? "game's next best grab" : "closest rock")}).");
     }
 
-    private void LogState(double now)
+    private void LogState(System.Numerics.Vector3 root, double now)
     {
         switch (Attempt.State)
         {
+            case AttemptState.Ready when Attempt.ArmedOnWall:
+                MelonLogger.Msg($"Ready on the wall ({System.Numerics.Vector3.Distance(root, _sentTo):0.00} m from where she was sent): the timer starts on Ava's first move.");
+                break;
             case AttemptState.Ready:
                 MelonLogger.Msg("Ready: the timer starts when Ava starts climbing.");
                 break;
