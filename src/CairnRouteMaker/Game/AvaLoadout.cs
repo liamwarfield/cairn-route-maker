@@ -61,10 +61,10 @@ internal static class AvaLoadout
         ["ITEM_CAN_MOONSHINE"] = "ITEM_ALC_MOONSHINE",
     };
 
-    /// <summary>Items a route can't hand out: story pieces, test items, and things the game manages itself.</summary>
+    /// <summary>Items a route can't hand out: story pieces, test items, things the game manages itself, and pitons (a setting of their own).</summary>
     private static readonly HashSet<string> Hidden = new()
     {
-        "ITEM_PUFF_UPGRADE", "ITEM_PUFF_STORAGE", "ITEM_CLIMBOT", "ITEM_SELF_DRINK_FROM_SOURCE", "ITEM_INTERACTION_TEST",
+        Loadout.PitonId, Loadout.CrystalPitonId, "ITEM_PUFF_UPGRADE", "ITEM_PUFF_STORAGE", "ITEM_CLIMBOT", "ITEM_SELF_DRINK_FROM_SOURCE", "ITEM_INTERACTION_TEST",
         "ITEM_CAN_TEST", "ITEM_AA_DEBUG_ALL", "ITEM_AA_DEBUG_ALL_COOKED", "ITEM_MAGIC_FROG_LICK", "ITEM_MAGIC_FROG_SECOND_LICK",
     };
 
@@ -100,9 +100,9 @@ internal static class AvaLoadout
             }
 
             ResetStamina();
-            if (loadout.Items != null)
+            if (loadout.Items != null || loadout.Pitons != null)
             {
-                SetInventory(loadout.Items);
+                SetInventory(loadout);
             }
         }
         catch (Exception e)
@@ -202,6 +202,9 @@ internal static class AvaLoadout
     public static string ItemName(string id) =>
         Catalog().FirstOrDefault(info => info.Id == id)?.Name ?? PrettyId(id);
 
+    /// <summary>An item's note from <see cref="Catalog"/>, e.g. how a meal was cooked; or null.</summary>
+    public static string ItemNote(string id) => Catalog().FirstOrDefault(info => info.Id == id)?.Note;
+
     private static bool Offered(InventoryItem item, out string id)
     {
         id = ((InventoryItemStringIdEnum)item.id.value).ToString();
@@ -250,8 +253,28 @@ internal static class AvaLoadout
         return words.Length == 0 ? id : char.ToUpperInvariant(words[0]) + words[1..];
     }
 
+    /// <summary>
+    /// How a meal or drink was made ("creamy", "herbal", ...), which sets it apart from others of the
+    /// same name with other effects; or for a liquid container, that it comes full of water.
+    /// </summary>
     private static string NoteFor(InventoryItem item, string id)
     {
+        var consumable = item.TryCast<ConsumableItem>();
+        if (consumable != null)
+        {
+            return consumable.modifier switch
+            {
+                ConsumableModifier.Creamy => "creamy",
+                ConsumableModifier.ExtraSweet => "extra sweet",
+                ConsumableModifier.Intense => "intense",
+                ConsumableModifier.Herbal => "herbal",
+                ConsumableModifier.Mixed => "mixed",
+                ConsumableModifier.Flambeed => "flambéed",
+                ConsumableModifier.Rare => "rare",
+                _ => null,
+            };
+        }
+
         var container = item.TryCast<ContainerItem>();
         if (container == null || container.containerType != ContainerType.Liquid)
         {
@@ -413,12 +436,13 @@ internal static class AvaLoadout
     }
 
     /// <summary>
-    /// Empty what Ava carries (bag, chalk bag, harness pitons and the Climbot's storage) and give
-    /// her the route's items. Custom items (the light stick, the barometer and other things the
-    /// game hands out itself) stay: the game can't take them away. The flask, charms, readables
-    /// and the infinite store aren't in these inventories, so they aren't touched.
+    /// Empty what the loadout sets from everything Ava carries (bag, chalk bag, harness and the
+    /// Climbot's storage): her pitons if it sets them, everything else if it sets items. Then give
+    /// her the route's pitons and items. Custom items (the light stick, the barometer and other
+    /// things the game hands out itself) stay: the game can't take them away. The flask, charms,
+    /// readables and the infinite store aren't in these inventories, so they aren't touched.
     /// </summary>
-    private static void SetInventory(List<LoadoutItem> items)
+    private static void SetInventory(Loadout loadout)
     {
         var manager = InventoryManager.Instance;
         if (manager == null)
@@ -427,14 +451,23 @@ internal static class AvaLoadout
             return;
         }
 
+        bool Replaced(InventoryItem item) => IsPiton(item) ? loadout.Pitons != null : loadout.Items != null;
         var removed = 0;
-        removed += Empty(manager.BagInventoryData);
-        removed += Empty(manager.PuffInventoryData);
-        removed += Empty(manager.PitonInventoryData);
-        removed += Empty(manager.ClimbotInventoryData);
+        removed += Empty(manager.BagInventoryData, Replaced);
+        removed += Empty(manager.PuffInventoryData, Replaced);
+        removed += Empty(manager.PitonInventoryData, Replaced);
+        removed += Empty(manager.ClimbotInventoryData, Replaced);
 
         var given = new List<string>();
-        foreach (var item in items)
+        var gifts = new List<LoadoutItem>();
+        if (loadout.Pitons is { } pitons)
+        {
+            gifts.Add(new LoadoutItem(Loadout.PitonId, pitons - loadout.CrystalPitons));
+            gifts.Add(new LoadoutItem(Loadout.CrystalPitonId, loadout.CrystalPitons));
+        }
+
+        gifts.AddRange(loadout.Items ?? new List<LoadoutItem>());
+        foreach (var item in gifts)
         {
             if (item.Count > 0 && Give(manager, item) is { } result)
             {
@@ -445,8 +478,14 @@ internal static class AvaLoadout
         MelonLogger.Msg($"Inventory: took {removed} stack{(removed == 1 ? "" : "s")} away, gave {(given.Count == 0 ? "nothing" : string.Join(", ", given))}.");
     }
 
-    /// <summary>Take every item except custom ones out of an inventory, without leftovers. Returns how many stacks went.</summary>
-    private static int Empty(InventoryDataBase inventory)
+    private static bool IsPiton(InventoryItem item) =>
+        ((InventoryItemStringIdEnum)item.id.value).ToString() is Loadout.PitonId or Loadout.CrystalPitonId;
+
+    /// <summary>
+    /// Take the items <paramref name="replaced"/> picks out of an inventory, without leftovers,
+    /// except custom ones. Returns how many stacks went.
+    /// </summary>
+    private static int Empty(InventoryDataBase inventory, Func<InventoryItem, bool> replaced)
     {
         if (inventory == null)
         {
@@ -469,7 +508,7 @@ internal static class AvaLoadout
         foreach (var data in stacks)
         {
             var item = data.InventoryItem;
-            if (item == null || item.Type == InventoryItemType.Custom)
+            if (item == null || item.Type == InventoryItemType.Custom || !replaced(item))
             {
                 continue;
             }

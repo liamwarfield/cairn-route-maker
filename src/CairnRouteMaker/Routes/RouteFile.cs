@@ -136,6 +136,8 @@ public static class RouteFile
         RightHand = loadout.RightHand,
         EndGame = loadout.EndGame,
         SurvivalNeeds = loadout.SurvivalNeeds,
+        Pitons = loadout.Pitons,
+        CrystalPitons = loadout.Pitons > 0 ? loadout.CrystalPitons : null,
         Items = loadout.Items?
             .Where(item => item.Count > 0)
             .Select(item => new ItemDto { Id = item.Id, Count = item.Count })
@@ -158,15 +160,36 @@ public static class RouteFile
             loadout.Health = Loadout.MinHealth + notch * Loadout.HealthStep;
         }
 
+        if (dto.Pitons is { } pitons)
+        {
+            loadout.Pitons = Math.Clamp(pitons, 0, Loadout.MaxPitons);
+            loadout.CrystalPitons = Math.Clamp(dto.CrystalPitons ?? 0, 0, loadout.Pitons.Value);
+        }
+
         if (dto.Items != null)
         {
             loadout.Items = new List<LoadoutItem>();
             foreach (var item in dto.Items)
             {
-                if (!string.IsNullOrEmpty(item.Id) && item.Count > 0)
+                if (string.IsNullOrEmpty(item.Id) || item.Count <= 0)
                 {
-                    loadout.Items.Add(new LoadoutItem(item.Id, Math.Min(item.Count, LoadoutItem.MaxCount)));
+                    continue;
                 }
+
+                // Pitons used to be listed as items; they have a setting of their own now.
+                if (item.Id is Loadout.PitonId or Loadout.CrystalPitonId)
+                {
+                    if (dto.Pitons == null)
+                    {
+                        loadout.Pitons = Math.Min((loadout.Pitons ?? 0) + item.Count, Loadout.MaxPitons);
+                        loadout.CrystalPitons += item.Id == Loadout.CrystalPitonId ? item.Count : 0;
+                        loadout.CrystalPitons = Math.Min(loadout.CrystalPitons, loadout.Pitons.Value);
+                    }
+
+                    continue;
+                }
+
+                loadout.Items.Add(new LoadoutItem(item.Id, Math.Min(item.Count, LoadoutItem.MaxCount)));
             }
         }
 
@@ -222,6 +245,8 @@ public static class RouteFile
         public Grip? RightHand { get; set; }
         public bool? EndGame { get; set; }
         public bool? SurvivalNeeds { get; set; }
+        public int? Pitons { get; set; }
+        public int? CrystalPitons { get; set; }
 
         /// <summary>Null: she keeps what she has. Empty: she carries nothing.</summary>
         public ItemDto[] Items { get; set; }

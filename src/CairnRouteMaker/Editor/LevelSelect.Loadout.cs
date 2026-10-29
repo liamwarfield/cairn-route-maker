@@ -41,10 +41,20 @@ internal sealed partial class LevelSelect
             detail: "Hunger, thirst and cold drain over time, as outside free climb. The bars start full either way."));
 
         Add(Header("Inventory"));
-        Add(Setting(route, page, "Items", loadout.Items == null ? "her own" : "set by the route", _ => ToggleItems(route),
+        Add(Setting(route, page, "Pitons", PitonCount(loadout.Pitons), loadout.StepPitons,
+            note: loadout.Pitons == 0 ? "free solo" : null,
+            detail: "How many pitons she has, up to a full harness. Unchanged leaves hers as they are."));
+        if (loadout.Pitons != null)
+        {
+            Add(Setting(route, page, "Crystal pitons", $"{loadout.CrystalPitons}", loadout.StepCrystalPitons,
+                detail: "How many of those are crystal pitons, which go into rock too hard for the others.",
+                enabled: loadout.Pitons > 0));
+        }
+
+        Add(Setting(route, page, "Items", loadout.Items == null ? "unchanged" : "only these", _ => ToggleItems(route),
             detail: loadout.Items == null
-                ? "She keeps whatever she has."
-                : "She carries exactly these, plus her flask, light stick and other things the game gives her itself."));
+                ? "Her food, water, chalk and other gear stay as they are."
+                : "Her food, water, chalk and other gear are only these. Pitons, her flask, light stick and other things the game gives her itself are kept apart."));
         var highlight = -1;
         if (loadout.Items != null)
         {
@@ -57,12 +67,13 @@ internal sealed partial class LevelSelect
 
                 var listed = item;
                 Add(Setting(route, page, AvaLoadout.ItemName(item.Id), item.Count == 0 ? "none" : $"×{item.Count}",
-                    step => Loadout.StepCount(listed, step), note: item.Count == 0 ? "comes off the list" : null));
+                    step => Loadout.StepCount(listed, step),
+                    note: Notes(AvaLoadout.ItemNote(item.Id), item.Count == 0 ? "comes off the list" : null)));
             }
 
             if (loadout.Items.Count == 0)
             {
-                Add(new Entry("Nothing: no food, water or gear.", false, false, null));
+                Add(new Entry("Nothing: no food, water, chalk or other gear.", false, false, null));
             }
 
             Add(new Entry("Add an item", false, true, () => Push(page, () => ShowItemCategories(route))));
@@ -76,7 +87,7 @@ internal sealed partial class LevelSelect
                 SaveLoadout(route);
                 ShowLoadout(route);
             },
-            detail: "Full health, taped fingers, no end game or survival needs, and her own items."));
+            detail: "Full health, taped fingers, no end game or survival needs, and her pitons and items unchanged."));
         End();
         if (highlight >= 0)
         {
@@ -87,8 +98,9 @@ internal sealed partial class LevelSelect
     private const string GripDetail = "Taped fingers grip best and save stamina, bare ones grip normally, and hurt ones tire her faster.";
 
     /// <summary>A setting that steps with left and right; each change is saved and the page redrawn in place.</summary>
-    private Entry Setting(Route route, Action page, string label, string value, Action<int> step, string note = null, string detail = null) =>
-        new(label, false, true, null, note: note, detail: detail, value: value, adjust: direction =>
+    private Entry Setting(Route route, Action page, string label, string value, Action<int> step, string note = null, string detail = null,
+        bool enabled = true) =>
+        new(label, false, enabled, null, note: note, detail: detail, value: value, adjust: direction =>
         {
             step(direction);
             SaveLoadout(route);
@@ -206,6 +218,13 @@ internal sealed partial class LevelSelect
             parts.Add("survival needs");
         }
 
+        if (loadout.Pitons is { } pitons)
+        {
+            parts.Add(pitons == 0 ? "free solo"
+                : loadout.CrystalPitons > 0 ? $"{pitons} pitons ({loadout.CrystalPitons} crystal)"
+                : pitons == 1 ? "1 piton" : $"{pitons} pitons");
+        }
+
         if (loadout.Items != null)
         {
             var count = loadout.Items.Sum(item => item.Count);
@@ -228,4 +247,11 @@ internal sealed partial class LevelSelect
     };
 
     private static string OnOff(bool on) => on ? "On" : "Off";
+
+    private static string PitonCount(int? pitons) => pitons switch
+    {
+        null => "unchanged",
+        0 => "none",
+        _ => $"{pitons}",
+    };
 }

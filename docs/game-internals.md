@@ -91,6 +91,8 @@ How the mod sets Ava up for a route (`Game/AvaLoadout.cs`). Read by disassembly;
   - Whatever doesn't fit in its inventory goes to the fallback (puff and pitons overflow into the bag), and the rest is dropped (`response.MissingParts`).
   - Adding a flask replaces the existing one. **xref**
   - A whole chalk (`ITEM_PUFF_1`) is three puffs, so the mod counts chalk in puffs, like pitons. **game**
+  - Pitons (`ITEM_PITON`) and crystal pitons (`ITEM_CRYSTAL_PITON`, which go into rock too hard for normal ones) are added the same way, as parts. The picker doesn't offer either: a loadout sets them with a count of its own. Crystal pitons from a loadout are untested in game.
+- **Cooked variants:** meals and drinks that share a name differ by `ConsumableItem.modifier` (`ConsumableModifier`: None, Creamy, ExtraSweet, Intense, Herbal, Mixed, Flambeed, Rare), and each has its own effects. **sig**
   - **Never call `PutItemParts` / `PutItemsWhole` with the `out InventoryStorageRequestResponse` overloads from a mod.** The response is a struct with two list references, and the interop passes an 8-byte slot for it: the game writes past it and crashes outright, with nothing in any log. **game** Use `PutItemParts(request)`, which returns the response, and for whole items call `request.WholeItemRequestToPartsRequest()` first (that plus `PutItemPartsInternal` is all `PutItemsWhole` does, **xref**).
 - **What resets the inventory:** respawns from a spawner or save (`PawnManager.Respawn`) and `ResetClimber(ResetAfterFall)` run `Recreate` + `GiveInitialItems`. The mod's revive warps don't. Assist mode's infinite gear refills pitons. **xref**
 

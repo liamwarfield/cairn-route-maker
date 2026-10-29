@@ -23,9 +23,11 @@ public class LoadoutTests
         route.Loadout.RightHand = Grip.Hurt;
         route.Loadout.EndGame = true;
         route.Loadout.SurvivalNeeds = true;
+        route.Loadout.Pitons = 6;
+        route.Loadout.CrystalPitons = 2;
         route.Loadout.AddItem("ITEM_ENERGY_BAR");
         route.Loadout.AddItem("ITEM_ENERGY_BAR");
-        route.Loadout.AddItem("ITEM_PITON");
+        route.Loadout.AddItem("ITEM_NUTS");
 
         var json = RouteFile.Serialize(route);
         var copy = RouteFile.Deserialize(json).Loadout;
@@ -36,9 +38,10 @@ public class LoadoutTests
         Assert.Equal(Grip.Hurt, copy.RightHand);
         Assert.True(copy.EndGame);
         Assert.True(copy.SurvivalNeeds);
+        Assert.Equal((6, 2), (copy.Pitons, copy.CrystalPitons));
         Assert.Collection(copy.Items,
             item => Assert.Equal(("ITEM_ENERGY_BAR", 2), (item.Id, item.Count)),
-            item => Assert.Equal(("ITEM_PITON", 1), (item.Id, item.Count)));
+            item => Assert.Equal(("ITEM_NUTS", 1), (item.Id, item.Count)));
         Assert.False(route.IsEmpty);
     }
 
@@ -113,5 +116,55 @@ public class LoadoutTests
 
         Assert.NotNull(loadout.Items);
         Assert.Empty(loadout.Items);
+    }
+
+    [Fact]
+    public void FreeSoloIsZeroPitonsNotUnchanged()
+    {
+        var route = new Route { ZoneKey = "Kami/A" };
+        route.Loadout.Pitons = 0;
+
+        var copy = RouteFile.Deserialize(RouteFile.Serialize(route)).Loadout;
+
+        Assert.Equal(0, copy.Pitons);
+        Assert.False(copy.IsDefault);
+    }
+
+    [Fact]
+    public void PitonsStepThroughUnchangedNoneAndAFullHarness()
+    {
+        var loadout = new Loadout();
+
+        loadout.StepPitons(1);
+        Assert.Equal(0, loadout.Pitons);
+        loadout.StepPitons(-2);
+        Assert.Equal(Loadout.MaxPitons, loadout.Pitons);
+        loadout.StepPitons(1);
+        Assert.Null(loadout.Pitons);
+    }
+
+    [Fact]
+    public void CrystalPitonsNeverOutnumberThePitons()
+    {
+        var loadout = new Loadout { Pitons = 3, CrystalPitons = 3 };
+
+        loadout.StepPitons(-1);
+        Assert.Equal(2, loadout.CrystalPitons);
+        loadout.StepCrystalPitons(1);
+        Assert.Equal(0, loadout.CrystalPitons);
+
+        var read = RouteFile.Deserialize(
+            "{\"formatVersion\": 8, \"zoneKey\": \"Kami/A\", \"loadout\": {\"pitons\": 2, \"crystalPitons\": 9}}").Loadout;
+        Assert.Equal((2, 2), (read.Pitons, read.CrystalPitons));
+    }
+
+    [Fact]
+    public void PitonsListedAsItemsMoveToThePitonSetting()
+    {
+        var loadout = RouteFile.Deserialize(
+            "{\"formatVersion\": 8, \"zoneKey\": \"Kami/A\", \"loadout\": {\"items\": [{\"id\": \"ITEM_PITON\", \"count\": 3}, {\"id\": \"ITEM_CRYSTAL_PITON\", \"count\": 1}, {\"id\": \"ITEM_NUTS\", \"count\": 1}]}}").Loadout;
+
+        Assert.Equal((4, 1), (loadout.Pitons, loadout.CrystalPitons));
+        Assert.Equal("ITEM_NUTS", Assert.Single(loadout.Items).Id);
     }
 }

@@ -35,15 +35,23 @@ public sealed class LoadoutItem
 /// <summary>
 /// The state Ava is put in each time she's taken to the route's start: her health, her grip, the
 /// end-game mode from near Kami's summit (hunger, thirst and warmth capped at a third), whether
-/// hunger, thirst and cold drain at all (free climb normally has them off), and optionally exactly
-/// what she carries. The defaults are what every route had before loadouts: Ava at full health
-/// with taped fingers, no end game, no drain, and her inventory left as it is.
+/// hunger, thirst and cold drain at all (free climb normally has them off), and optionally how many
+/// pitons and exactly which other items she carries. The defaults are what every route had before
+/// loadouts: Ava at full health with taped fingers, no end game, no drain, and her inventory left
+/// as it is.
 /// </summary>
 public sealed class Loadout
 {
     public const int MinHealth = 5;
     public const int MaxHealth = 100;
     public const int HealthStep = 5;
+
+    /// <summary>A full harness.</summary>
+    public const int MaxPitons = 10;
+
+    /// <summary>The game's ids for a piton and a crystal piton.</summary>
+    public const string PitonId = "ITEM_PITON";
+    public const string CrystalPitonId = "ITEM_CRYSTAL_PITON";
 
     /// <summary>Health as a percentage of Ava's full health. End game caps it at half.</summary>
     public int Health { get; set; } = MaxHealth;
@@ -57,11 +65,17 @@ public sealed class Loadout
     /// <summary>Hunger, thirst and cold drain over time, as outside free climb.</summary>
     public bool SurvivalNeeds { get; set; }
 
-    /// <summary>Exactly what Ava carries, or null to leave her inventory as it is.</summary>
+    /// <summary>How many pitons she has (0 is free solo), or null to leave hers as they are.</summary>
+    public int? Pitons { get; set; }
+
+    /// <summary>How many of the <see cref="Pitons"/> are crystal pitons, which go into rock too hard for the others.</summary>
+    public int CrystalPitons { get; set; }
+
+    /// <summary>Exactly what else Ava carries (everything but pitons), or null to leave it as it is.</summary>
     public List<LoadoutItem> Items { get; set; }
 
     public bool IsDefault => Health == MaxHealth && LeftHand == Grip.Taped && RightHand == Grip.Taped
-        && !EndGame && !SurvivalNeeds && Items == null;
+        && !EndGame && !SurvivalNeeds && Pitons == null && Items == null;
 
     /// <summary>Step the health by <paramref name="steps"/> notches, wrapping past either end.</summary>
     public void StepHealth(int steps)
@@ -77,6 +91,23 @@ public sealed class Loadout
     {
         var count = Enum.GetValues<Grip>().Length;
         return (Grip)((((int)grip + steps) % count + count) % count);
+    }
+
+    /// <summary>Step the piton count through unchanged, none, then 1 to a full harness, wrapping around.</summary>
+    public void StepPitons(int steps)
+    {
+        const int values = MaxPitons + 2;
+        var index = (Pitons ?? -1) + 1;
+        index = ((index + steps) % values + values) % values;
+        Pitons = index == 0 ? null : index - 1;
+        CrystalPitons = Math.Min(CrystalPitons, Pitons ?? 0);
+    }
+
+    /// <summary>Step how many of the pitons are crystal, from none to all of them, wrapping around.</summary>
+    public void StepCrystalPitons(int steps)
+    {
+        var values = (Pitons ?? 0) + 1;
+        CrystalPitons = ((CrystalPitons + steps) % values + values) % values;
     }
 
     /// <summary>Add one of an item, or one more if it's already listed. Starts an item list if there isn't one.</summary>
