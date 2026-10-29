@@ -60,6 +60,7 @@ Key names are X keysyms. Coordinates are in the 1920x1080 screen, so halve what 
 
 - The mod prints its hotkeys near the top of `Latest.log` (the "Choose Free Climb on the title screen" line). F10 dumps the world state to the log from anywhere.
 - Menus are keyboard driven: arrows, Enter, and Escape for back. The level select's footer says the same.
+- In the game's Settings, Escape doesn't go back on the fake screen. Right-click instead, or left-click the page-button column. Arrow keys sometimes stop moving the highlight inside a settings page, and Back stops working too; a left-click in the page-button column closes the page and brings the keyboard back. This happens on the game's own pages as well as the mod's.
 - Mouse clicks work but hovering doesn't move the menu highlight. Be careful clicking near the bottom of the title menu, because Quit is there and exits the game.
 - Screenshot before and after each input, and give the game a second or two to react. Loading into a mountain takes longer, so watch the log or keep screenshotting.
 

@@ -30,6 +30,7 @@ public sealed class RouteMakerMod : MelonMod
     private FreeClimbSession _session;
     private FreeClimbLauncher _launcher;
     private readonly LoadingArtGallery _gallery = new();
+    private readonly PaintColorsMenu _paintColors = new();
     private string _lastZone;
     private float _nextZoneCheck;
 
@@ -45,6 +46,7 @@ public sealed class RouteMakerMod : MelonMod
         _launcher = new FreeClimbLauncher(_storage, _session);
         MainMenuPatches.FreeClimbClicked += _launcher.Open;
         MainMenuPatches.LoadingArtClicked += _gallery.Open;
+        SettingsMenuPatches.RoutesClicked += _paintColors.Open;
         EagleEyePatches.DisplayRouteToggled += OnDisplayRouteToggled;
         LoggerInstance.Msg($"Loaded. Routes are stored in {directory}");
         LoggerInstance.Msg("Choose Free Climb on the title screen. In free climb: F6 (or L3+R3) route editor, F8 (or R3 in the editor) freecam, F7 teleport to route start, F9 show/hide route.");
@@ -59,6 +61,7 @@ public sealed class RouteMakerMod : MelonMod
             ModControls.EnsureCreated();
             _launcher.Update();
             _gallery.Update();
+            _paintColors.Update();
             _session.Update();
             HandleDiagnosticsKey();
             if (_session.IsActive)
