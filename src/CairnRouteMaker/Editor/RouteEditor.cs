@@ -241,8 +241,8 @@ internal sealed class RouteEditor
     }
 
     /// <summary>
-    /// A route's name or description was changed from the menu: if it's the one on show,
-    /// the editor's copy takes them too, or its next save would undo the change.
+    /// A route's name, description or loadout was changed from the menu: if it's the one on
+    /// show, the editor's copy takes them too, or its next save would undo the change.
     /// </summary>
     public void OnRouteDetailsChanged(Route route)
     {
@@ -250,6 +250,7 @@ internal sealed class RouteEditor
         {
             Route.Name = route.Name;
             Route.Description = route.Description;
+            Route.Loadout = route.Loadout;
         }
     }
 
@@ -308,23 +309,16 @@ internal sealed class RouteEditor
         }
 
         Close();
-        var zone = GameApi.CurrentZoneKey;
-        var position = RouteOverlay.ToUnity(start.Position);
-        if (Route.ZoneKey != zone)
+        if (Route.ZoneKey != GameApi.CurrentZoneKey && _traveler.StartToRoute(Route, SetStatus))
         {
-            var parts = Route.ZoneKey.Split('/', 2);
-            if (parts.Length == 2 && Enum.TryParse<Il2Cpp.StreamingTweakables.World>(parts[0], out var world))
-            {
-                _traveler.Start(world, parts[1], position, start.YawDegrees, SetStatus);
-                SetStatus($"Travelling to {Route.ZoneKey}...");
-                return;
-            }
+            SetStatus($"Travelling to {Route.ZoneKey}...");
+            return;
         }
 
-        if (GameApi.TryTeleportAva(position, start.YawDegrees, out var reason))
+        if (GameApi.TryTeleportAva(RouteOverlay.ToUnity(start.Position), start.YawDegrees, out var reason))
         {
-            // Every attempt starts with Ava fresh, whatever the last climb took out of her.
-            GameApi.RestoreAva();
+            // Every attempt starts the same, whatever the last climb took out of Ava.
+            AvaLoadout.Apply(Route.Loadout);
             _overlay.Visible = true;
             SetStatus("Teleported to route start. Climb on!");
         }
@@ -829,7 +823,8 @@ internal sealed class RouteEditor
         {
             if (GameApi.TryQuickTeleportAva(hit, _yaw, out var reason))
             {
-                GameApi.RestoreAva();
+                // Mid-route too, so a section can be tried as the route has it.
+                AvaLoadout.Apply(Route?.Loadout);
                 Close();
                 SetStatus("Moved Ava to the marker.");
             }
@@ -863,7 +858,7 @@ internal sealed class RouteEditor
     private void UpdateLevelSelect()
     {
         LevelSelectView.Show(LevelSelect, Input);
-        if (LevelSelect.UpdateTextEntry())
+        if (LevelSelect.UpdateTextEntry() || LevelSelect.TryAdjust(Input.MenuAdjust))
         {
             return;
         }
@@ -907,7 +902,7 @@ internal sealed class RouteEditor
 
         if (!entry.LeavesEditor)
         {
-            entry.Choose();
+            LevelSelect.Choose();
             return;
         }
 
@@ -1053,6 +1048,7 @@ internal sealed class RouteEditor
         _undo.Clear();
         SelectedPoint = -1;
         Route = route;
+        AvaLoadout.LeaveModes(route?.Loadout);
         ActiveLine = route is { Lines.Count: > 0 } ? 0 : -1;
         _dirty = false;
         _overlay.Rebuild(null);

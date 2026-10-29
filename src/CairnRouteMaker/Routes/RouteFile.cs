@@ -16,10 +16,10 @@ public static class RouteFile
 {
     /// <summary>
     /// 2 added erase strokes, 3 the finish, 4 a route line, 5 several lines with colours, 6 a
-    /// description, 7 rappel pieces of lines; older files read unchanged (a version 4 line becomes
-    /// one green line).
+    /// description, 7 rappel pieces of lines, 8 the loadout; older files read unchanged (a version
+    /// 4 line becomes one green line, and files without a loadout get the default one).
     /// </summary>
-    public const int FormatVersion = 7;
+    public const int FormatVersion = 8;
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -64,6 +64,7 @@ public static class RouteFile
                     .Where(line => line.Points.Count > 0)
                     .Select(line => new LineDto { Grade = line.Grade, Points = ToDtos(line.Points) })
                     .ToArray(),
+            Loadout = route.Loadout.IsDefault ? null : ToDto(route.Loadout),
         };
         return JsonSerializer.Serialize(dto, Options);
     }
@@ -120,7 +121,56 @@ public static class RouteFile
             route.Lines.Add(line);
         }
 
+        if (dto.Loadout != null)
+        {
+            route.Loadout = FromDto(dto.Loadout);
+        }
+
         return route;
+    }
+
+    private static LoadoutDto ToDto(Loadout loadout) => new()
+    {
+        Health = loadout.Health,
+        LeftHand = loadout.LeftHand,
+        RightHand = loadout.RightHand,
+        EndGame = loadout.EndGame,
+        SurvivalNeeds = loadout.SurvivalNeeds,
+        Items = loadout.Items?
+            .Where(item => item.Count > 0)
+            .Select(item => new ItemDto { Id = item.Id, Count = item.Count })
+            .ToArray(),
+    };
+
+    /// <summary>Missing fields keep their defaults, and out-of-range numbers are brought back into range.</summary>
+    private static Loadout FromDto(LoadoutDto dto)
+    {
+        var loadout = new Loadout
+        {
+            LeftHand = dto.LeftHand ?? Grip.Taped,
+            RightHand = dto.RightHand ?? Grip.Taped,
+            EndGame = dto.EndGame ?? false,
+            SurvivalNeeds = dto.SurvivalNeeds ?? false,
+        };
+        if (dto.Health is { } health)
+        {
+            var notch = (int)MathF.Round((float)(Math.Clamp(health, Loadout.MinHealth, Loadout.MaxHealth) - Loadout.MinHealth) / Loadout.HealthStep);
+            loadout.Health = Loadout.MinHealth + notch * Loadout.HealthStep;
+        }
+
+        if (dto.Items != null)
+        {
+            loadout.Items = new List<LoadoutItem>();
+            foreach (var item in dto.Items)
+            {
+                if (!string.IsNullOrEmpty(item.Id) && item.Count > 0)
+                {
+                    loadout.Items.Add(new LoadoutItem(item.Id, Math.Min(item.Count, LoadoutItem.MaxCount)));
+                }
+            }
+        }
+
+        return loadout;
     }
 
     private static LinePointDto[] ToDtos(List<LinePoint> points) =>
@@ -161,6 +211,26 @@ public static class RouteFile
 
         /// <summary>Version 4's single line; only read.</summary>
         public LinePointDto[] Line { get; set; }
+
+        public LoadoutDto Loadout { get; set; }
+    }
+
+    private sealed class LoadoutDto
+    {
+        public int? Health { get; set; }
+        public Grip? LeftHand { get; set; }
+        public Grip? RightHand { get; set; }
+        public bool? EndGame { get; set; }
+        public bool? SurvivalNeeds { get; set; }
+
+        /// <summary>Null: she keeps what she has. Empty: she carries nothing.</summary>
+        public ItemDto[] Items { get; set; }
+    }
+
+    private sealed class ItemDto
+    {
+        public string Id { get; set; }
+        public int Count { get; set; }
     }
 
     private sealed class LineDto

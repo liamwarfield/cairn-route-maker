@@ -62,6 +62,37 @@ Confidence: **sig** = confirmed from signatures, **xref** = confirmed from the n
   - `EndCriticalStatTimer(stat)` stops a stat's pass-out countdown. **sig**
 - Climbing stamina is per limb: `ClimbingV2PawnLimb.ResetStamina()`. **sig**
 - `GameDataManager.ResetSurvivalValues()` / `ResetStats()` also exist. They aren't used because what else they reset is unknown.
+- Setting a finger's health to 1 also tapes it: see "Route loadouts" below.
+
+## Route loadouts
+
+How the mod sets Ava up for a route (`Game/AvaLoadout.cs`). Read by disassembly; tweakable values come from `StreamingAssets/aa/StandaloneWindows64/tweakables_assets_all.bundle` (read with UnityPy, **asset**). **game** = confirmed in game.
+
+- **Values (asset):** max HP 100; hunger, thirst and cold max 100, warning at 0.33, pass-out timer 180 s; finger hurt threshold 0.25, tape threshold (`fingerMaximumThreshold`) 0.7; `endGameMaxStatRatio` 0.333, `endGameMaxHpRatio` 0.5.
+- **End game** (`GameDataManager.InEndGame`, true if `GameData.isInEndGame` or summit end is set):
+  - While it's on, `CurrentMaxHp` is halved, `ModifyStat` caps hunger, thirst and cold at a third, pass-out timers are a third as long, and `WalkingPawnController.EndGameExhausted` stops her running. **xref**
+  - `GameDataManager.SetIsInEndGame(true)` plays a 10 s coroutine that pauses survival and game time (both reference counts) and only then clamps the stats. Cancelling it early with `SetIsInEndGame(false)` leaks both pauses. **xref**
+  - The mod skips the coroutine: `GameData.SetIsInEndGame(on)`, then `EndGameAnimationAmount = 1` (0 to turn off) so the HUD draws the caps. `ModifyStat(stat, 0, 0, false)` then clamps a stat under its cap. **game**: hunger, thirst and cold settle at 33.3 and HP at 50/50, and switching it off lifts the caps.
+  - `RefillStat` ignores the cap (it clamps with the minimum first), so it fills hunger, thirst and cold to 100 even in end game. **xref**
+  - It needs no story systems; the story only switches it on (`CutsceneStoryEvent`). Avoid `SetIsSummitEnd`: in summit end `ModifyStat` ignores every change. **xref**
+- **Hunger, thirst and cold drain:** `GamemodeConstraints.NoPhysiologicalNeeds` is read live from `CairnSceneManager.GameSetup` by `GameDataManager.CanStatBeAffected` (game-time drain, `ModifyStat`'s negative changes, pass-out timers) and by `StatusUI.Update`. Flipping the flag on the running setup (a struct: assign it back) starts or stops the drain. **game**: in free climb, hunger fell from 33.3 to 24 and thirst to 17 in about 4 minutes; cold held at Lunch Break. Assist mode's God mode keeps it off regardless.
+- **Health:** `SetCurrentHp` writes the value without clamping and kills Ava at 0. At 1 HP or less the next knock kills her, and under 15 she's in the critical state. Max HP isn't eroded in this build (`maxHpErosion` 0). **xref**
+- **Fingers:** health runs 0-1 (`SetFingerHealth01` clamps). A finger shows tape above 0.7 (`IsFingerTaped` compares with `FingerRenderer.TAPE_VISIBILITY_THRESHOLD`, which reads the threshold), and taping sets 1.0. So setting every finger to 1 tapes them all. **xref**
+  - `SetFingerHealth01(i, h, true, false)` sets it exactly (the debug command `ChangeFingersHPDC` passes the same flags) and raises `FingerHealthHasChanged`, which updates the hand UI. Fingers 0-4 are the left hand. **xref**
+  - The taping screen's grip gauge (`GetGlobalFingerStatePerHand`): excellent if the hand averages over 0.7 with no finger under 0.25, normal if it averages over 0.25 with at most 2 fingers under 0.25, hurt otherwise. In play it changes stamina, not grip (`fingerGripEffectMultiplier` is 0). **xref/asset**
+- **Item ids:** `InventoryItemStringId` wraps an int; `InventoryItemStringIdEnum` names them (`ITEM_PITON`, ...). Saves store the label, so the mod does too. **xref**
+- **Item names:** `LocalizationManager.Instance.Get(item.locKey)`, from `InventoryManager.Instance.library.items` (315 items; 158 pass the mod's filter). **game**
+- **The flask** lives outside the bag, chalk bag, harness and Climbot, so emptying those leaves it and its water, and the item filter doesn't offer it. **game**
+- **Emptying inventories:** `InventoryManager.Clear()` and `Recreate()` reset all seven inventories, charms and readables included. The item's own `Remove` leaves leftovers and throws for custom items (`CustomItem.Remove`), so the game's `EmptyBackpackDC` breaks on a light stick. **xref**
+  - The mod snapshots each of `BagInventoryData` (`GetBagItemData(i).ItemData`), `PuffInventoryData`, `PitonInventoryData` and `ClimbotInventoryData` (`inventory[i]`), then calls the inventory's own `Remove(item, data)` on everything but custom items. It raises `NotifyItemDestroyed` for the UI. **game** (a fresh free-climb inventory is 18 stacks). The quick wheel's piton and chalk counts only catch up when the wheel next refreshes.
+- **Adding items:** the debug command `GiveItemDC` makes `new InventoryStorageRequest(id, count, contentId, 0, LootTarget.Aava, BagSearchMode.BottomUp, printErrors, displayToasts, metadata)` and calls `PutItemParts`. **xref**
+  - `PutItemsWhole` asks for count × `MaxCount` parts: whole items, and full containers when given a content id.
+  - Climbing gear stacks, so the mod adds pitons as parts; one without per-unit data gets full health.
+  - Whatever doesn't fit in its inventory goes to the fallback (puff and pitons overflow into the bag), and the rest is dropped (`response.MissingParts`).
+  - Adding a flask replaces the existing one. **xref**
+  - A whole chalk (`ITEM_PUFF_1`) is three puffs, so the mod counts chalk in puffs, like pitons. **game**
+  - **Never call `PutItemParts` / `PutItemsWhole` with the `out InventoryStorageRequestResponse` overloads from a mod.** The response is a struct with two list references, and the interop passes an 8-byte slot for it: the game writes past it and crashes outright, with nothing in any log. **game** Use `PutItemParts(request)`, which returns the response, and for whole items call `request.WholeItemRequestToPartsRequest()` first (that plus `PutItemPartsInternal` is all `PutItemsWhole` does, **xref**).
+- **What resets the inventory:** respawns from a spawner or save (`PawnManager.Respawn`) and `ResetClimber(ResetAfterFall)` run `Recreate` + `GiveInitialItems`. The mod's revive warps don't. Assist mode's infinite gear refills pitons. **xref**
 
 ## Ice gear (axes and crampons)
 

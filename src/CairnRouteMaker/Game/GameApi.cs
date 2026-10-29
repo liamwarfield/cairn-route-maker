@@ -388,7 +388,8 @@ internal static class GameApi
 
     /// <summary>
     /// Whether the running game is one we launched: a Summit-type game with exactly the free-climb
-    /// rules. Story games and the player's own Summit runs never match. Says nothing about whether
+    /// rules, give or take hunger and thirst (a route can switch them on). Story games and the
+    /// player's own Summit runs never match. Says nothing about whether
     /// Ava is in the world yet; the game keeps its last setup while back on the main menu.
     /// </summary>
     public static bool IsFreeClimbGame
@@ -399,7 +400,9 @@ internal static class GameApi
             {
                 var scenes = CairnSceneManager.Instance;
                 var setup = scenes == null ? null : scenes.GameSetup;
-                return setup != null && setup.summitMode && setup.constraints == FreeClimbConstraints;
+                // A route's loadout can switch hunger, thirst and cold on (see AvaLoadout).
+                return setup != null && setup.summitMode
+                    && (setup.constraints | GamemodeConstraints.NoPhysiologicalNeeds) == FreeClimbConstraints;
             }
             catch (Exception)
             {
@@ -1460,85 +1463,6 @@ internal static class GameApi
                 lifeline.RemovePiton(piton);
             }
         }
-    }
-
-    private static readonly SurvivalStat[] SurvivalStats =
-    {
-        SurvivalStat.Hunger, SurvivalStat.Thirst, SurvivalStat.Cold, SurvivalStat.Exhaustion, SurvivalStat.Hp,
-    };
-
-    /// <summary>
-    /// Put Ava back to full: hunger, thirst, cold, exhaustion and HP refilled (and their critical
-    /// timers stopped), every finger at full health, and each limb's climbing stamina reset.
-    /// Finger tape is left alone.
-    /// </summary>
-    public static void RestoreAva()
-    {
-        try
-        {
-            var data = GameDataManager.Instance;
-            if (data != null)
-            {
-                var before = DescribeStats(data);
-                foreach (var stat in SurvivalStats)
-                {
-                    data.RefillStat(stat);
-                }
-
-                // After the other stats, so whatever caps max HP has been refilled too.
-                data.SetCurrentHp(data.CurrentMaxHp);
-                var climber = data.GameData == null ? null : data.GameData.climberData;
-                if (climber != null)
-                {
-                    foreach (var stat in SurvivalStats)
-                    {
-                        climber.EndCriticalStatTimer(stat);
-                    }
-
-                    var fingers = climber.fingerHP01;
-                    for (var i = 0; fingers != null && i < fingers.Length; i++)
-                    {
-                        climber.SetFingerHealth01(i, 1f, true, false);
-                    }
-                }
-
-                MelonLogger.Msg($"Restored Ava: {before} -> {DescribeStats(data)}.");
-            }
-
-            var climbing = Switcher == null ? null : Switcher.climbingPawnController;
-            if (climbing != null)
-            {
-                foreach (var target in LimbOrder)
-                {
-                    var limb = climbing.GetLimb(target);
-                    if (limb != null)
-                    {
-                        limb.ResetStamina();
-                    }
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            MelonLogger.Warning($"Couldn't restore Ava's stats: {e.Message}");
-        }
-    }
-
-    private static string DescribeStats(GameDataManager data)
-    {
-        var parts = new List<string>();
-        foreach (var stat in SurvivalStats)
-        {
-            parts.Add($"{stat} {data.GetStat(stat):0.##}");
-        }
-
-        var climber = data.GameData == null ? null : data.GameData.climberData;
-        if (climber != null)
-        {
-            parts.Add($"fingers {climber.GetAverageFingersHealth01PerHand(false):0.##}");
-        }
-
-        return string.Join(", ", parts);
     }
 
     /// <summary>

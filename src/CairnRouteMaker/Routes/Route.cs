@@ -119,7 +119,11 @@ public sealed class Route
     /// <summary>The route's lines, e.g. the main line and its variants, each in its own colour.</summary>
     public List<ClimbLine> Lines { get; } = new();
 
-    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0 && !Lines.Exists(line => line.Points.Count > 0);
+    /// <summary>How Ava is set up each time she's put on the start: health, grip, end game, survival needs and items.</summary>
+    public Loadout Loadout { get; set; } = new();
+
+    public bool IsEmpty => Start == null && Finish == null && Strokes.Count == 0 && !Lines.Exists(line => line.Points.Count > 0)
+        && Loadout.IsDefault;
 
     /// <summary>
     /// Whether a point counts as on-route: the last stroke containing it decides, and only an

@@ -118,7 +118,7 @@ public class RouteTests
         var json = RouteFile.Serialize(route);
         var copy = RouteFile.Deserialize(json);
 
-        Assert.Contains("\"formatVersion\": 7", json);
+        Assert.Contains("\"formatVersion\": 8", json);
         Assert.Contains("\"grade\": \"black\"", json);
         Assert.Equal(2, copy.Lines.Count);
         Assert.Equal(LineGrade.Blue, copy.Lines[0].Grade);
