@@ -94,6 +94,7 @@ public sealed class RouteMakerMod : MelonMod
         _editor?.LateUpdate();
         _overlay?.LateUpdate();
         LevelSelectView.EndFrame();
+        ControlsHud.EndFrame();
     }
 
     public override void OnGUI()
