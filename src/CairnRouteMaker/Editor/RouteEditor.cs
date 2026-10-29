@@ -106,6 +106,9 @@ internal sealed class RouteEditor
     /// <summary>Freecam mode: look around and move Ava, but no editing. Opening always starts here.</summary>
     public bool Freecam { get; private set; }
 
+    /// <summary>Where the editor's camera is, while it's open.</summary>
+    public Vector3? CameraPosition => IsOpen && _camera != null ? _camera.transform.position : null;
+
     /// <summary>The route on show, or null. Never null while editing.</summary>
     public Route Route { get; private set; }
     public StrokeMode Mode { get; private set; } = StrokeMode.Allow;

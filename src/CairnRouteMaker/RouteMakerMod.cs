@@ -55,6 +55,7 @@ public sealed class RouteMakerMod : MelonMod
     {
         try
         {
+            Diagnostics.SampleFrame();
             ModControls.EnsureCreated();
             _launcher.Update();
             _gallery.Update();
@@ -67,6 +68,7 @@ public sealed class RouteMakerMod : MelonMod
                 _editor?.Update();
                 _traveler.Update();
                 UpdateAttempt();
+                UpdatePaintFocus();
             }
 
             // Drawing paint casts rays at the rock, so it waits out loading screens.
@@ -113,6 +115,30 @@ public sealed class RouteMakerMod : MelonMod
         }
 
         _attempt.Update(_editor.Route);
+    }
+
+    /// <summary>
+    /// Paint only shows near Ava, or near the camera in the route editor: every painted spot costs
+    /// frame rate, and the route lines show the way from further off.
+    /// </summary>
+    private void UpdatePaintFocus()
+    {
+        if (_overlay == null)
+        {
+            return;
+        }
+
+        if (_editor is { IsOpen: true })
+        {
+            if (_editor.CameraPosition is { } camera)
+            {
+                _overlay.ShowPaintAround(camera);
+            }
+        }
+        else if (GameApi.AvaPosition is { } ava)
+        {
+            _overlay.ShowPaintAround(ava);
+        }
     }
 
     /// <summary>Show the route chosen in the launcher, or none: a zone's routes are never picked automatically.</summary>
@@ -164,6 +190,12 @@ public sealed class RouteMakerMod : MelonMod
         if (keyboard != null && keyboard.f10Key.wasPressedThisFrame)
         {
             Diagnostics.Dump();
+            if (_overlay != null)
+            {
+                var (cubes, shown, faded) = _overlay.PaintCounts;
+                LoggerInstance.Msg($"Route paint: {shown} of {cubes} cubes drawn, {faded} of them fading out (slowest frame of fading since the last F10: "
+                    + $"{_overlay.TakeSlowestPaintFadeMs():0.00} ms); draw distance {PaintColors.DescribePaintDistance(PaintColors.PaintDistance)}.");
+            }
         }
     }
 

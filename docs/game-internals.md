@@ -181,6 +181,8 @@ Confirmed in game; the shader was read by disassembling `TGB/Decal` from `tgboth
   - Reset `mainTextureScale` and `mainTextureOffset`.
 
   Materials borrowed from the game's tape decals have `_MainTex_ST = (-0.5, 1, 0, 0)`. With clamped sampling, that pins every pixel to one texel column.
+- **Opacity goes through the decal, not the material.** `TGBDecal.UpdateOpacity` writes `_Opacity = lifetimeOpacityMul * fadeOutOpacityMul * opacityMul` into the decal's `MaterialPropertyBlock` (creating it if needed), and that value overrides the material's `_Opacity`. Setting `_Opacity` on the material does nothing visible. To fade a decal, call `SetOpacityMultiplier(x)`: it sets `opacityMul` and calls `UpdateOpacity`. **disasm** (`GameAssembly.dll`, addresses from Cpp2IL's `cpp2il_out`). In game, a material `_Opacity` fade on route paint had no visible effect.
+- **Fades the build leaves out:** the shader declares `NEARFADE` (`_NearFadeMin`, `_NearFadeMax`), but no variant was compiled with it, and no program reads those values, so turning it on does nothing. Of the fades, only `BOXFADE` (`_BoxFadeDistance`) and `NORMALSFADE` are built. **disasm** (keyword and uniform names in the shader's program blobs).
 - **Layers:** `TGBDecal.Layer.Enviro0` paints environment surfaces. Other values are `Background = -1`, `Enviro1`, `VFX = 10` and `Wetness = 20`.
 - **IL2CPP performance:** under IL2CPP, every `UnityEngine.Vector3` / `Mathf` call from a mod crosses into native code. Per-texel loops written with them took seconds, so use `System.Numerics` and `MathF` in hot loops.
 - **Collider meshes:** rock `MeshCollider` meshes are not CPU-readable (`isReadable = false`).
@@ -292,3 +294,13 @@ Read by disassembly (`GameAssembly.dll`; RVAs from the Cpp2IL stubs). The mod's 
   - It puts its actions in `assetToInstanceCache`, mapped to themselves, and adds context bits `1 << 24` (Freecam) and `1 << 25` (Route Editor).
   - It answers made-up loc keys in a `LocalizationManager.Get` prefix.
   - It saves its rebinds to `UserData/CairnRouteMaker/Controls.json` from a `RebindSheet.OnRebind` postfix.
+
+## Video settings page
+
+Read from the interop assemblies; the mod's row is confirmed in game, on the title screen and in the pause menu.
+
+- **Rows are fields built in code.** `VideoSettingsPage` keeps its rows as TGBTools.UI fields: `FieldListArrows` for the quality rows (`QualityField`, `EnviroQualityField`, `LightQualityField`, `RockQualityField`), plus `FieldToggle` and `FieldSlider`. The menu's shared `FieldsUI.Add(Field)` makes a row for a field from the template for its type and appends it.
+- **`FieldListArrows(FieldLabel label, FieldLabel[] values, int index, OnValueChangedDelegate onValueChanged, int? defaultIndex)`.** A `FieldLabel` is a loc key or a plain string. Left and right wrap around at the ends. The Settings Reset prompt (R on keyboard) sets the field to `defaultIndex` and calls `onValueChanged`, with no confirmation.
+- **Description line:** the text under the rows comes from the page's `infos` (`SettingsPage.Info`: `field`, `fieldUI`, `fieldLocKey`, `infoLocKey`). A field that isn't in it shows a blank description.
+- **Back:** Escape doesn't leave a settings page; the on-screen Back control does.
+- **What the mod does** (`Game/VideoSettingsPatches.cs`): a `VideoSettingsPage.OnOpened` postfix adds a "Route paint distance" `FieldListArrows` after the page's own rows, unless one with that label is already there. It's added again each time the page opens, once each time. **guess** that `OnOpened` is where the page adds its own rows; ours always lands after them.

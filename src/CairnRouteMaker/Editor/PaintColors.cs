@@ -18,9 +18,9 @@ internal enum PaintStyle
 /// How route paint looks: the colours of allow and deny paint, which the brush preview and the
 /// next-grab indicator follow too, whether it's drawn as a fill, a glow along its edges or both,
 /// and whether the glow pulses; also whether route lines show (each line has its own colour, see
-/// <see cref="LineColors"/>). Set on the menu's Paint Colours page and saved in
-/// UserData/MelonPreferences.cfg, the colours as #RRGGBB, so any other colour can be typed in
-/// while the game is closed. The default yellow and red are hard to tell
+/// <see cref="LineColors"/>), and how far from Ava (or the editor camera) the paint shows. Set on the
+/// menu's Paint Colours page and saved in UserData/MelonPreferences.cfg, the colours as #RRGGBB,
+/// so any other colour can be typed in while the game is closed. The default yellow and red are hard to tell
 /// apart with red-green colour blindness; the blue and orange preset stays distinct under
 /// simulated protanopia, deuteranopia and tritanopia.
 /// </summary>
@@ -78,12 +78,33 @@ internal static class PaintColors
     private static MelonPreferences_Entry<string> _styleEntry;
     private static MelonPreferences_Entry<bool> _pulseEntry;
     private static MelonPreferences_Entry<bool> _showLineEntry;
+    private static MelonPreferences_Entry<float> _distanceEntry;
+
+    private const float DefaultPaintDistance = 15f;
+
+    /// <summary>
+    /// The levels <see cref="PaintDistance"/> is offered at, on the game's Video settings page and in
+    /// the mod's menu, lowest first: a name, and the distance in metres (0 for all of the paint).
+    /// </summary>
+    public static readonly (string Name, float Metres)[] PaintDistanceLevels =
+    {
+        ("Low", 10f), ("Medium", DefaultPaintDistance), ("High", 25f), ("Max", 0f),
+    };
+
+    public static int DefaultPaintDistanceLevel => LevelOf(DefaultPaintDistance);
 
     public static Color32 Allow { get; private set; } = Yellow.Color;
     public static Color32 Deny { get; private set; } = Red.Color;
     public static PaintStyle Style { get; private set; } = PaintStyle.FillAndGlow;
     public static bool GlowPulse { get; private set; } = true;
     public static bool ShowLine { get; private set; } = true;
+
+    /// <summary>
+    /// Paint only shows within this many metres of Ava, or of the camera in the route editor,
+    /// fading out towards the edge, since every painted spot costs frame rate and the route lines
+    /// show the way from further off. 0 shows it everywhere.
+    /// </summary>
+    public static float PaintDistance { get; private set; } = DefaultPaintDistance;
 
     public static bool ShowsFill => Style != PaintStyle.GlowOnly;
     public static bool ShowsGlow => Style != PaintStyle.FillOnly;
@@ -99,11 +120,14 @@ internal static class PaintColors
         _styleEntry = _category.CreateEntry("PaintStyle", PaintStyle.FillAndGlow.ToString(), "Paint style", "FillAndGlow, GlowOnly or FillOnly.");
         _pulseEntry = _category.CreateEntry("PaintGlowPulse", true, "Paint glow pulse", "Slowly pulse the glow along the edges of route paint.");
         _showLineEntry = _category.CreateEntry("ShowRouteLine", true, "Show route lines", "Draw route lines over the rock.");
+        _distanceEntry = _category.CreateEntry("PaintShowDistance", DefaultPaintDistance, "Paint show distance",
+            "Route paint only shows within this many metres of Ava (of the camera in the route editor and freecam), fading out towards the edge; 0 shows it everywhere.");
         Allow = Read(_allowEntry, Yellow.Color);
         Deny = Read(_denyEntry, Red.Color);
         Style = ReadStyle(_styleEntry);
         GlowPulse = _pulseEntry.Value;
         ShowLine = _showLineEntry.Value;
+        PaintDistance = ReadDistance(_distanceEntry);
     }
 
     public static Color32 Of(StrokeMode mode) => mode == StrokeMode.Allow ? Allow : Deny;
@@ -173,6 +197,52 @@ internal static class PaintColors
         Changed?.Invoke();
     }
 
+    public static void SetPaintDistance(float metres)
+    {
+        PaintDistance = metres;
+        if (_category != null)
+        {
+            _distanceEntry.Value = metres;
+            _category.SaveToFile(false);
+        }
+
+        Changed?.Invoke();
+    }
+
+    public static void SetPaintDistanceLevel(int level) => SetPaintDistance(PaintDistanceLevels[level].Metres);
+
+    /// <summary>
+    /// The level nearest a distance, for showing one typed into MelonPreferences.cfg that isn't a
+    /// level's: 0 (all of the paint) is Max, anything else the nearest of the rest.
+    /// </summary>
+    public static int LevelOf(float metres)
+    {
+        var best = 0;
+        for (var i = 0; i < PaintDistanceLevels.Length; i++)
+        {
+            var level = PaintDistanceLevels[i].Metres;
+            if (level == metres)
+            {
+                return i;
+            }
+
+            if (level > 0f && metres > 0f && MathF.Abs(level - metres) < MathF.Abs(PaintDistanceLevels[best].Metres - metres))
+            {
+                best = i;
+            }
+        }
+
+        return metres > 0f ? best : Array.FindIndex(PaintDistanceLevels, l => l.Metres == 0f);
+    }
+
+    /// <summary>"Medium (15 m)", "Max (all paint)", or just "20 m" for a distance that isn't a level's.</summary>
+    public static string DescribePaintDistance(float metres)
+    {
+        var distance = metres > 0f ? $"{metres:0.#} m" : "all paint";
+        var level = PaintDistanceLevels[LevelOf(metres)];
+        return level.Metres == metres ? $"{level.Name} ({distance})" : distance;
+    }
+
     public static string NameOf(PaintStyle style) => style switch
     {
         PaintStyle.GlowOnly => "Glow only",
@@ -216,6 +286,17 @@ internal static class PaintColors
 
         MelonLogger.Warning($"{entry.Identifier} '{entry.Value}' in MelonPreferences.cfg isn't FillAndGlow, GlowOnly or FillOnly; using FillAndGlow.");
         return PaintStyle.FillAndGlow;
+    }
+
+    private static float ReadDistance(MelonPreferences_Entry<float> entry)
+    {
+        if (entry.Value >= 0f && float.IsFinite(entry.Value))
+        {
+            return entry.Value;
+        }
+
+        MelonLogger.Warning($"{entry.Identifier} '{entry.Value}' in MelonPreferences.cfg isn't a distance in metres; using {DefaultPaintDistance}.");
+        return DefaultPaintDistance;
     }
 
     private static bool TryParse(string text, out Color32 color)

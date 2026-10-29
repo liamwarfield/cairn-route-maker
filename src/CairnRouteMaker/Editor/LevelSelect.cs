@@ -651,6 +651,9 @@ internal sealed class LevelSelect
             note: PaintColors.GlowPulse ? "on" : "off"));
         Add(new Entry("Show route lines", false, true, () => ChangePaint(() => PaintColors.SetShowLine(!PaintColors.ShowLine)),
             note: PaintColors.ShowLine ? "on" : "off"));
+        Add(new Entry("Paint draw distance", false, true, () => ChangePaint(() => PaintColors.SetPaintDistanceLevel(
+                (PaintColors.LevelOf(PaintColors.PaintDistance) + 1) % PaintColors.PaintDistanceLevels.Length)),
+            note: PaintColors.DescribePaintDistance(PaintColors.PaintDistance)));
 
         Add(new Entry("Presets", true, false, null));
         foreach (var preset in PaintColors.Presets)
