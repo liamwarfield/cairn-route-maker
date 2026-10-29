@@ -42,7 +42,6 @@ internal sealed partial class LevelSelect
 
         Add(Header("Inventory"));
         Add(Setting(route, page, "Pitons", PitonCount(loadout.Pitons), loadout.StepPitons,
-            note: loadout.Pitons == 0 ? "free solo" : null,
             detail: "How many pitons she has, up to a full harness. Unchanged leaves hers as they are."));
         if (loadout.Pitons != null)
         {
@@ -251,7 +250,7 @@ internal sealed partial class LevelSelect
     private static string PitonCount(int? pitons) => pitons switch
     {
         null => "unchanged",
-        0 => "none",
+        0 => "free solo",
         _ => $"{pitons}",
     };
 }
