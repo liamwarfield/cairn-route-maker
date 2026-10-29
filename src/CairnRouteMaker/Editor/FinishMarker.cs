@@ -79,7 +79,7 @@ internal sealed class FinishMarker
 
     private readonly MarkerPad _pad;
     private readonly GlowMesh _mesh;
-    private readonly MarkerRock _rock = new();
+    private readonly MarkerRock _rock = new("Finish");
 
     /// <summary>The bubble's vertices on a unit sphere (so also its normals), row by row from the top.</summary>
     private readonly NVector3[] _sphere;
@@ -143,7 +143,7 @@ internal sealed class FinishMarker
             _pad.Draw(2f * (finish.Radius + PadMargin), PadTexel);
         }
 
-        _rock.Reset(finish.Position);
+        _rock.Reset(finish.Position, finish.Radius);
         _rock.Update(Time.unscaledTime);
         Layout();
     }
@@ -207,7 +207,9 @@ internal sealed class FinishMarker
 
     private void Layout()
     {
-        _pad.Place(_finish.Position, _rock.Normal, NVector3.UnitZ, MathF.Max(1f, 0.6f * _finish.Radius));
+        // As for the start's ring (see StartMarker), wall rock gets a deeper, more forgiving pad.
+        var wall = _rock.Climbing;
+        _pad.Place(_finish.Position, _rock.Normal, NVector3.UnitZ, MathF.Max(wall ? 1.6f : 1f, 0.6f * _finish.Radius), wall ? 0.25f : 0.5f);
         _mesh.Position = RouteOverlay.ToUnity(_finish.Position);
     }
 

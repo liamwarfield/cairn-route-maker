@@ -1037,6 +1037,38 @@ internal static class GameApi
     }
 
     /// <summary>
+    /// The general facing of the rock across a disc of <paramref name="radius"/> around
+    /// <paramref name="point"/>, as seen from along <paramref name="axis"/>: the average normal of
+    /// the rock hit by rays cast back along it across the disc. The face at the point itself can be
+    /// one facet of a crack or a knob, facing anywhere. Gives <paramref name="axis"/> if no ray hits.
+    /// </summary>
+    public static Vector3 AverageRockNormal(Vector3 point, Vector3 axis, float radius)
+    {
+        var across = Vector3.Cross(axis, Mathf.Abs(axis.y) < 0.9f ? Vector3.up : Vector3.right).normalized;
+        var along = Vector3.Cross(axis, across);
+
+        // Rays start well in front of the disc and give up a radius behind it, so rock far behind a
+        // drop-off doesn't count.
+        var reach = radius + 0.5f;
+        var sum = Vector3.zero;
+        foreach (var (ring, count) in new[] { (0f, 1), (0.5f, 8), (1f, 12) })
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var angle = 2f * Mathf.PI * i / count;
+                var offset = (across * Mathf.Cos(angle) + along * Mathf.Sin(angle)) * (ring * radius);
+                if (Physics.Raycast(point + offset + axis * reach, -axis, out var hit, reach + radius, SurfaceMask, QueryTriggerInteraction.Ignore)
+                    && Vector3.Dot(hit.normal, axis) > 0.2f)
+                {
+                    sum += hit.normal;
+                }
+            }
+        }
+
+        return sum.sqrMagnitude > 1e-4f ? sum.normalized : axis;
+    }
+
+    /// <summary>
     /// The surface that decides how Ava starts at <paramref name="point"/>, and its layer. A hold's
     /// own faces say nothing about the slope of the wall it's on, so for a hold
     /// <paramref name="hit"/> becomes the wall behind it; false if there isn't one.

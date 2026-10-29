@@ -22,6 +22,16 @@ internal sealed class StartMarker
     private const int PadResolution = 512;
     private const float PadSize = 2.3f;
     private const float PadDepth = 1f;
+
+    /// <summary>
+    /// How much of the ground facing the other way still gets the ring (see MarkerPad.Place): the
+    /// paint's own setting, which keeps it off the sides of stones and grass.
+    /// </summary>
+    private const float PadMinFacing = 0.5f;
+
+    /// <summary>Wall rock is rougher and seen from the side, so the ring reaches further onto it.</summary>
+    private const float WallPadDepth = 1.6f;
+    private const float WallPadMinFacing = 0.25f;
     private const float RingRadius = 0.55f;
     private const float LineHalfWidth = 0.03f;
     private const float HaloWidth = 0.1f;
@@ -53,7 +63,7 @@ internal sealed class StartMarker
 
     private readonly MarkerPad _pad;
     private readonly GlowMesh _column;
-    private readonly MarkerRock _rock = new();
+    private readonly MarkerRock _rock = new("Start");
     private StartPosition _start;
     private bool _padDrawn;
 
@@ -86,7 +96,8 @@ internal sealed class StartMarker
             _padDrawn = true;
         }
 
-        _rock.Reset(start.Position);
+        // The start's facing is the camera's from when it was set, which on a wall looked at the rock.
+        _rock.Reset(start.Position, RingRadius, Facing(start));
         _rock.Update(Time.unscaledTime);
         Layout();
     }
@@ -117,16 +128,21 @@ internal sealed class StartMarker
     /// <summary>Put the pad on the rock and the column over it, now the rock's slope is known (or assumed).</summary>
     private void Layout()
     {
-        var yaw = _start.YawDegrees * MathF.PI / 180f;
-        var facing = new NVector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
+        var facing = Facing(_start);
         var normal = _rock.Normal;
 
         // On a wall the arrow points up it; under a roof there's no up along the rock, so it shows her facing.
         var forward = _rock.Climbing && MathF.Abs(normal.Y) < 0.9f ? NVector3.UnitY : facing;
-        _pad.Place(_start.Position, normal, forward, PadDepth);
+        _pad.Place(_start.Position, normal, forward, _rock.Climbing ? WallPadDepth : PadDepth, _rock.Climbing ? WallPadMinFacing : PadMinFacing);
 
         _foot = _rock.Climbing ? normal * WallStandOff - NVector3.UnitY * WallColumnDrop : NVector3.Zero;
         _column.Position = RouteOverlay.ToUnity(_start.Position);
+    }
+
+    private static NVector3 Facing(StartPosition start)
+    {
+        var yaw = start.YawDegrees * MathF.PI / 180f;
+        return new NVector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
     }
 
     private static NVector4 PadTexel(float x, float y)

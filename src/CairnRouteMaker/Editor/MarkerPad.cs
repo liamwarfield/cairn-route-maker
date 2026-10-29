@@ -17,6 +17,7 @@ internal sealed class MarkerPad
     private const float Emission = 0.5f;
 
     private static readonly int EmissionId = Shader.PropertyToID("_MainTexAsEmission");
+    private static readonly int NormalsFadeThresholdId = Shader.PropertyToID("_NormalsFadeThreshold");
 
     private readonly DecalPaint _paint;
     private readonly Transform _parent;
@@ -75,9 +76,10 @@ internal sealed class MarkerPad
     /// Lay the pattern on the rock at <paramref name="point"/>, facing out along
     /// <paramref name="normal"/>, with its forward (y) along <paramref name="forward"/> as far as the
     /// rock's slope allows. Rock up to half of <paramref name="depth"/> in front of or behind that
-    /// plane still gets the pattern.
+    /// plane still gets the pattern, as long as it faces out along the normal at least
+    /// <paramref name="minFacing"/> (a dot product).
     /// </summary>
-    public void Place(NVector3 point, NVector3 normal, NVector3 forward, float depth)
+    public void Place(NVector3 point, NVector3 normal, NVector3 forward, float depth, float minFacing)
     {
         if (_object == null)
         {
@@ -95,6 +97,7 @@ internal sealed class MarkerPad
         var transform = _object.transform;
         transform.SetPositionAndRotation(RouteOverlay.ToUnity(point), Quaternion.LookRotation(RouteOverlay.ToUnity(NVector3.Normalize(along)), RouteOverlay.ToUnity(-normal)));
         transform.localScale = new Vector3(_size, depth, _size);
+        _material.SetFloat(NormalsFadeThresholdId, minFacing);
 
         // The decal registers with the game's decal system when it's enabled, so only once it's in place.
         _placed = true;
