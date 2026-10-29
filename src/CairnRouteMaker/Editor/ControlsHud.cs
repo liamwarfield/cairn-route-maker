@@ -647,7 +647,7 @@ internal static class ControlsHud
         Place(_mode.rectTransform, Left, Top, 900f, 26f);
         _mode.fontStyle = FontStyles.UpperCase;
         _mode.characterSpacing = 12f;
-        Style(_mode, _style.FontSize * 0.45f, WithAlpha(_style.NotSelected, 0.75f));
+        Style(_mode, _style.FontSize * 0.45f, WithAlpha(_style.NotSelected, 0.85f));
 
         _title = NewText("Title", _root.transform);
         Place(_title.rectTransform, Left, Top + 26f, 900f, 52f);
@@ -661,7 +661,7 @@ internal static class ControlsHud
 
         _counts = NewText("Counts", _root.transform);
         Place(_counts.rectTransform, Left, Top + 110f, 900f, 28f);
-        Style(_counts, _style.FontSize * 0.48f, WithAlpha(_style.NotSelected, 0.7f));
+        Style(_counts, _style.FontSize * 0.48f, WithAlpha(_style.NotSelected, 0.9f));
 
         _warning = NewText("Warning", _root.transform);
         Place(_warning.rectTransform, Left, Top + 138f, 900f, 28f);

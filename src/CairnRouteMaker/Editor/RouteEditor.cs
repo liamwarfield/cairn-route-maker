@@ -191,6 +191,7 @@ internal sealed class RouteEditor
         GameApi.StopStreamingAroundCamera();
         GameApi.ReleaseCamera();
         GameApi.BlockGameInput(false);
+        GameApi.HideGameHud(false);
         _camera = null;
         Looking = false;
         IsOpen = false;
@@ -925,6 +926,7 @@ internal sealed class RouteEditor
         var hideCursor = Looking || (Input.UsingGamepad && !LevelSelect.IsOpen);
         Cursor.lockState = Looking ? CursorLockMode.Locked : CursorLockMode.None;
         Cursor.visible = !hideCursor;
+        GameApi.HideGameHud(true);
         if (!LevelSelect.IsOpen)
         {
             ControlsHud.Show(this);
