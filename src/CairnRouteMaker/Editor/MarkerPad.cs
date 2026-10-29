@@ -116,6 +116,19 @@ internal sealed class MarkerPad
         }
     }
 
+    /// <summary>
+    /// Register with the game's decal system again, so the pad draws over every decal registered
+    /// before now (the route paint): the game draws decals in the order they register.
+    /// </summary>
+    public void DrawOnTop()
+    {
+        if (_object != null && _object.activeInHierarchy)
+        {
+            _object.SetActive(false);
+            _object.SetActive(true);
+        }
+    }
+
     /// <summary>Dim the glow, 1 being full; for the markers' breathing.</summary>
     public void SetBrightness(float brightness)
     {

@@ -125,6 +125,9 @@ internal sealed class StartMarker
         _pad.SetBrightness(GlowMesh.Breath(time, 0.3f));
     }
 
+    /// <summary>Draw the painted ring over the route paint; see MarkerPad.DrawOnTop.</summary>
+    public void DrawOnTop() => _pad.DrawOnTop();
+
     /// <summary>Put the pad on the rock and the column over it, now the rock's slope is known (or assumed).</summary>
     private void Layout()
     {

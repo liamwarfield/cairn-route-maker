@@ -228,6 +228,13 @@ internal sealed class DecalPaint
         }
     }
 
+    /// <summary>
+    /// Goes up whenever paint decals register with the game's decal system. Decals draw in the order
+    /// they register, so anything that has to draw over the paint (the start and finish rings)
+    /// registers again after this changes.
+    /// </summary>
+    public int Registrations { get; private set; }
+
     /// <summary>Show or hide the fill and the edge glow. Glow textures are only drawn while it shows.</summary>
     public void SetStyle(bool fill, bool glow)
     {
@@ -235,6 +242,10 @@ internal sealed class DecalPaint
         var glowShown = glow && !_glow;
         _fill = fill;
         _glow = glow;
+        if (fillShown || glowShown)
+        {
+            Registrations++;
+        }
         foreach (var cell in _cells.Values)
         {
             if (cell.GameObject == null)
@@ -1119,6 +1130,7 @@ internal sealed class DecalPaint
         }
 
         cell.GameObject.SetActive(true);
+        Registrations++;
         return true;
     }
 

@@ -40,6 +40,7 @@ internal sealed class RouteOverlay
     private Material[] _brushMaterials;
     private Material _markerMaterial;
     private bool _visible = true;
+    private int _paintRegistrations;
 
     public RouteOverlay()
     {
@@ -67,6 +68,11 @@ internal sealed class RouteOverlay
         {
             _visible = value;
             _root.SetActive(value);
+            if (value)
+            {
+                // Everything under the overlay just registered again, in no promised order.
+                DrawMarkersOnTop();
+            }
         }
     }
 
@@ -103,6 +109,21 @@ internal sealed class RouteOverlay
     {
         _paint.Flush();
         _paint.Animate(Time.unscaledTime);
+        if (_paint.Registrations != _paintRegistrations)
+        {
+            DrawMarkersOnTop();
+        }
+    }
+
+    /// <summary>
+    /// Re-register the start and finish rings after the paint, so the paint doesn't cover them: the
+    /// game draws decals in the order they register, and paint decals come and go as it's drawn.
+    /// </summary>
+    private void DrawMarkersOnTop()
+    {
+        _paintRegistrations = _paint.Registrations;
+        _start.DrawOnTop();
+        _finish.DrawOnTop();
     }
 
     /// <summary>Lay the route lines and markers out for the camera; call after the camera has moved for the frame.</summary>

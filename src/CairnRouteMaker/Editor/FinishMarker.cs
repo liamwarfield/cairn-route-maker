@@ -205,6 +205,9 @@ internal sealed class FinishMarker
         _pad.SetBrightness(GlowMesh.Breath(time, 0.3f));
     }
 
+    /// <summary>Draw the painted ring over the route paint; see MarkerPad.DrawOnTop.</summary>
+    public void DrawOnTop() => _pad.DrawOnTop();
+
     private void Layout()
     {
         // As for the start's ring (see StartMarker), wall rock gets a deeper, more forgiving pad.
