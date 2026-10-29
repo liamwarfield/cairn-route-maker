@@ -16,9 +16,10 @@ public static class RouteFile
 {
     /// <summary>
     /// 2 added erase strokes, 3 the finish, 4 a route line, 5 several lines with colours, 6 a
-    /// description; older files read unchanged (a version 4 line becomes one green line).
+    /// description, 7 rappel pieces of lines; older files read unchanged (a version 4 line becomes
+    /// one green line).
     /// </summary>
-    public const int FormatVersion = 6;
+    public const int FormatVersion = 7;
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -123,13 +124,14 @@ public static class RouteFile
     }
 
     private static LinePointDto[] ToDtos(List<LinePoint> points) =>
-        points.Select(point => new LinePointDto { P = ToArray(point.Position), N = ToArray(point.Normal) }).ToArray();
+        points.Select(point => new LinePointDto { P = ToArray(point.Position), N = ToArray(point.Normal), Rappel = point.Rappel ? true : null })
+            .ToArray();
 
     private static void AddPoints(ClimbLine line, LinePointDto[] points)
     {
         foreach (var pointDto in points ?? Array.Empty<LinePointDto>())
         {
-            line.Points.Add(new LinePoint(FromArray(pointDto.P), FromArray(pointDto.N)));
+            line.Points.Add(new LinePoint(FromArray(pointDto.P), FromArray(pointDto.N), pointDto.Rappel == true));
         }
     }
 
@@ -189,6 +191,9 @@ public static class RouteFile
     {
         public float[] P { get; set; }
         public float[] N { get; set; }
+
+        /// <summary>True if the piece leading to this point is a rappel; left out otherwise.</summary>
+        public bool? Rappel { get; set; }
     }
 
     private sealed class StampDto

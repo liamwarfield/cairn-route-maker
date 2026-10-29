@@ -15,7 +15,7 @@ namespace CairnRouteMaker.Editor;
 ///   RT paint, X cycle brush, D-pad up/down brush size, Y set start, A set finish,
 ///   View undo, D-pad right save, Menu play-test, D-pad left level select, B close.
 ///   With the line tool (the fourth brush): RT adds or drags points, D-pad down deletes the
-///   selected point and holding it clears the line.
+///   selected point and holding it clears the line, L3 makes a piece of line a rappel or a climb.
 ///   In freecam: A moves Ava to the marker; editing controls do nothing.
 ///   R3 on its own switches between editing and freecam.
 ///   L3+R3 opens and closes the editor from anywhere (handled by the mod, not here).
@@ -39,6 +39,8 @@ internal sealed class EditorInput
     // L3+R3 doesn't also switch.
     private bool _toggleDown;
     private bool _toggleCombo;
+    private bool _rappelDown;
+    private bool _rappelCombo;
     private float _clearHeld;
     private bool _clearFired;
     private float _newLineHeld = -1f;
@@ -79,6 +81,7 @@ internal sealed class EditorInput
     public bool ToggleLine { get; private set; }
     public bool CycleLineColor { get; private set; }
     public bool NewLine { get; private set; }
+    public bool ToggleRappel { get; private set; }
 
     // Menu navigation (level select).
     public int MenuMove { get; private set; }
@@ -101,6 +104,8 @@ internal sealed class EditorInput
     {
         _toggleDown = false;
         _toggleCombo = false;
+        _rappelDown = false;
+        _rappelCombo = false;
         _clearHeld = 0f;
         _clearFired = false;
         _newLineHeld = -1f;
@@ -124,7 +129,7 @@ internal sealed class EditorInput
         CycleBrush = false;
         SelectBrush = null;
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
-        DeletePoint = ClearLine = ToggleLine = CycleLineColor = NewLine = false;
+        DeletePoint = ClearLine = ToggleLine = CycleLineColor = NewLine = ToggleRappel = false;
         MenuMove = 0;
         MenuConfirm = MenuBack = MenuEdit = MenuClick = false;
 
@@ -185,6 +190,7 @@ internal sealed class EditorInput
             ToggleLine |= ModControls.ShowLine.KeyPressed;
             CycleLineColor |= !ctrl && ModControls.LineColor.KeyPressed;
             NewLine |= !ctrl && ModControls.NewLine.KeyPressed;
+            ToggleRappel |= !ctrl && ModControls.Rappel.KeyPressed;
 
             if (keyboard.upArrowKey.wasPressedThisFrame || ModControls.MoveForward.KeyPressed) MenuMove -= 1;
             if (keyboard.downArrowKey.wasPressedThisFrame || ModControls.MoveBack.KeyPressed) MenuMove += 1;
@@ -251,6 +257,23 @@ internal sealed class EditorInput
             {
                 ToggleFreecam |= _toggleDown && !_toggleCombo;
                 _toggleDown = false;
+            }
+
+            if (ModControls.Rappel.PadPressed)
+            {
+                _rappelDown = true;
+                _rappelCombo = false;
+            }
+
+            if (_rappelDown && pad.leftStickButton.isPressed && pad.rightStickButton.isPressed)
+            {
+                _rappelCombo = true;
+            }
+
+            if (ModControls.Rappel.PadReleased)
+            {
+                ToggleRappel |= _rappelDown && !_rappelCombo;
+                _rappelDown = false;
             }
 
             if (pad.dpad.up.wasPressedThisFrame || pad.leftStick.up.wasPressedThisFrame) MenuMove -= 1;

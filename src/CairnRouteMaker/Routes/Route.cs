@@ -51,8 +51,12 @@ public sealed class FinishZone
     }
 }
 
-/// <summary>A control point of a route line: a spot on the rock and the rock's outward normal there.</summary>
-public readonly record struct LinePoint(Vector3 Position, Vector3 Normal);
+/// <summary>
+/// A control point of a route line: a spot on the rock and the rock's outward normal there.
+/// <paramref name="Rappel"/> marks the piece of line from the point before to this one as a rappel,
+/// which is drawn dotted; the first point's is unused.
+/// </summary>
+public readonly record struct LinePoint(Vector3 Position, Vector3 Normal, bool Rappel = false);
 
 /// <summary>A route line's colour: the difficulty scale of the game's map, easiest first.</summary>
 public enum LineGrade
@@ -68,7 +72,8 @@ public enum LineGrade
 
 /// <summary>
 /// One route line: control points bottom to top, with a smooth curve drawn through them (see
-/// <see cref="RouteCurve"/>). It's only a guide and doesn't affect what counts as on-route.
+/// <see cref="RouteCurve"/>), solid where it's climbed and dotted where it's rappelled. It's only a
+/// guide and doesn't affect what counts as on-route.
 /// </summary>
 public sealed class ClimbLine
 {

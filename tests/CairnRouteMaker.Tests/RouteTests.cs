@@ -118,7 +118,7 @@ public class RouteTests
         var json = RouteFile.Serialize(route);
         var copy = RouteFile.Deserialize(json);
 
-        Assert.Contains("\"formatVersion\": 6", json);
+        Assert.Contains("\"formatVersion\": 7", json);
         Assert.Contains("\"grade\": \"black\"", json);
         Assert.Equal(2, copy.Lines.Count);
         Assert.Equal(LineGrade.Blue, copy.Lines[0].Grade);
@@ -126,6 +126,24 @@ public class RouteTests
         Assert.Equal(LineGrade.Black, copy.Lines[1].Grade);
         Assert.Equal(variant.Points, copy.Lines[1].Points);
         Assert.False(copy.IsEmpty);
+    }
+
+    [Fact]
+    public void RoundTripsRappelPiecesAndLeavesTheFlagOutOfClimbedOnes()
+    {
+        var route = new Route { ZoneKey = "Kami/A" };
+        var line = new ClimbLine();
+        line.Points.Add(new LinePoint(new Vector3(0, 10, 0), Vector3.UnitZ));
+        line.Points.Add(new LinePoint(new Vector3(0, 2, 0), Vector3.UnitZ, Rappel: true));
+        line.Points.Add(new LinePoint(new Vector3(1, 5, 0), Vector3.UnitZ));
+        route.Lines.Add(line);
+
+        var json = RouteFile.Serialize(route);
+        var copy = RouteFile.Deserialize(json);
+
+        Assert.Equal(line.Points, copy.Lines[0].Points);
+        Assert.True(copy.Lines[0].Points[1].Rappel);
+        Assert.Equal(2, json.Split("\"rappel\"").Length);
     }
 
     [Fact]

@@ -494,7 +494,8 @@ internal sealed class RouteEditor
     /// it; pressing on the line between two points puts a new point there and grabs that; pressing on
     /// another line makes that the one being edited; pressing anywhere else on rock adds a point at the
     /// end. Holding on drags the grabbed point over the rock. Delete removes the selected point (the
-    /// last one if none is), and every change is one undo step.
+    /// last one if none is), the rappel control makes a piece of line dotted, and every change is one
+    /// undo step.
     /// </summary>
     private void UpdateLineTool(RaycastHit hit)
     {
@@ -535,6 +536,11 @@ internal sealed class RouteEditor
         {
             EndDrag();
             DeletePoint();
+        }
+        else if (Input.ToggleRappel)
+        {
+            EndDrag();
+            ToggleRappel(aim);
         }
 
         if (Input.PaintPressed && !Looking)
@@ -592,10 +598,11 @@ internal sealed class RouteEditor
         }
 
         var points = Active.Points;
-        var point = new LinePoint(RouteOverlay.ToNumerics(hit.point), RouteOverlay.ToNumerics(hit.normal));
         var segment = _overlay.LineAt(ActiveLine).PickSegment(_camera, aim);
         var index = segment >= 0 ? segment + 1 : points.Count;
-        points.Insert(index, point);
+        // A point put on a rappel splits it into two rappels; one added at the end starts a climb.
+        var rappel = index < points.Count && points[index].Rappel;
+        points.Insert(index, new LinePoint(RouteOverlay.ToNumerics(hit.point), RouteOverlay.ToNumerics(hit.normal), rappel));
         PushLineUndo();
         _overlay.SetLine(ActiveLine, Active);
         _dirty = true;
@@ -623,8 +630,13 @@ internal sealed class RouteEditor
     private void MovePoint(int index, RaycastHit hit)
     {
         var points = Active?.Points;
-        var point = new LinePoint(RouteOverlay.ToNumerics(hit.point), RouteOverlay.ToNumerics(hit.normal));
-        if (points == null || index >= points.Count || points[index] == point)
+        if (points == null || index >= points.Count)
+        {
+            return;
+        }
+
+        var point = points[index] with { Position = RouteOverlay.ToNumerics(hit.point), Normal = RouteOverlay.ToNumerics(hit.normal) };
+        if (points[index] == point)
         {
             return;
         }
@@ -740,11 +752,42 @@ internal sealed class RouteEditor
         var index = SelectedPoint >= 0 && SelectedPoint < points.Count ? SelectedPoint : points.Count - 1;
         _undo.Push((UndoKind.Line, null, null, Snapshot()));
         points.RemoveAt(index);
+        if (index == 0 && points.Count > 0)
+        {
+            // Nothing leads to the first point.
+            points[0] = points[0] with { Rappel = false };
+        }
+
         _overlay.SetLine(ActiveLine, Active);
         _dirty = true;
         // Step back along the line, so pressing delete again keeps removing towards the start.
         SelectedPoint = points.Count == 0 ? -1 : Math.Max(index - 1, 0);
         SetStatus($"Deleted point {index + 1} of {LineName(ActiveLine)}; {points.Count} left.");
+    }
+
+    /// <summary>
+    /// Make a piece of the line a rappel, drawn dotted, or a climb again: the piece under the cursor,
+    /// or else the one leading to the selected point (from it, for the first point; the last piece if
+    /// no point is selected), so pressing it right after placing a point changes the piece just drawn.
+    /// </summary>
+    private void ToggleRappel(Vector2 aim)
+    {
+        var points = Active?.Points;
+        if (points == null || points.Count < 2)
+        {
+            SetStatus("Place two points first: a rappel goes from one point to the next.");
+            return;
+        }
+
+        var segment = Looking ? -1 : _overlay.LineAt(ActiveLine).PickSegment(_camera, aim);
+        var index = segment >= 0 ? segment + 1
+            : SelectedPoint >= 0 && SelectedPoint < points.Count ? Math.Max(SelectedPoint, 1)
+            : points.Count - 1;
+        _undo.Push((UndoKind.Line, null, null, Snapshot()));
+        points[index] = points[index] with { Rappel = !points[index].Rappel };
+        _overlay.SetLine(ActiveLine, Active);
+        _dirty = true;
+        SetStatus($"Points {index} to {index + 1} of {LineName(ActiveLine)}: {(points[index].Rappel ? "rappel (dotted)" : "climb")}.");
     }
 
     /// <summary>Remove the line being edited; the one before it becomes the line being edited.</summary>

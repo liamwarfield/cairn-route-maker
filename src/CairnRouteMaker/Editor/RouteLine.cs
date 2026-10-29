@@ -14,7 +14,8 @@ namespace CairnRouteMaker.Editor;
 
 /// <summary>
 /// Draws a route line like the game's map routes: a thick, smooth, dark-bordered line over the rock,
-/// with white-ringed dots at its ends and, while editing, at each control point.
+/// with white-ringed dots at its ends and, while editing, at each control point. Rappel pieces are a
+/// row of bordered dots instead (see <see cref="RappelDots"/>).
 ///
 /// The curve (see <see cref="RouteCurve"/>) is sampled every <see cref="SampleSpacing"/> and each
 /// sample is pushed onto the rock by a raycast along the normal, so the line follows the surface
@@ -26,8 +27,8 @@ namespace CairnRouteMaker.Editor;
 /// allows up close). Each vertex is slid toward the camera along its view ray, which leaves it at the
 /// same spot on screen but in front of rock within a metre or so of the line; larger things in front
 /// (a ridge, Ava) still hide it.
-/// One mesh and one draw call: triangles are drawn in order, so the border goes first, then the line,
-/// then the dots.
+/// One mesh and one draw call: triangles are drawn in order, so the borders of the line and rappel
+/// dots go first, then the line and rappel dots, then the point dots.
 /// </summary>
 internal sealed class RouteLine
 {
@@ -45,6 +46,14 @@ internal sealed class RouteLine
     private const float SelectedScale = 1.6f;
     private const float HoveredScale = 1.3f;
     private const int DiscSegments = 20;
+
+    /// <summary>Rappel dots: their size, and the closest they get on screen, centre to centre, before every other one shrinks away.</summary>
+    private const float RappelDotPixels = 4f;
+    private const float RappelSpacingPixels = 18f;
+    private const int RappelSegments = 12;
+
+    /// <summary>Very long rappels get fewer, further-apart dots so the mesh stays a sensible size.</summary>
+    private const int MaxRappelDots = 2048;
 
     /// <summary>How near the cursor has to be to grab a control point, or the line between them.</summary>
     private const float PickPointPixels = 16f;
@@ -71,6 +80,10 @@ internal sealed class RouteLine
     private const float SnapRetrySeconds = 2f;
 
     private static readonly Color32 Ring = new(250, 250, 250, 255);
+
+    /// <summary>Points around a unit circle, for the discs' edges.</summary>
+    private static readonly NVector2[] DiscCircle = Circle(DiscSegments);
+    private static readonly NVector2[] RappelCircle = Circle(RappelSegments);
 
     /// <summary>One piece between two control points, remembered so moving a point only redoes its neighbours.</summary>
     private sealed class Segment
@@ -104,6 +117,7 @@ internal sealed class RouteLine
     private readonly List<LinePoint> _points = new();
     private readonly List<Segment> _segments = new();
     private readonly List<Dot> _dots = new();
+    private readonly List<RappelDot> _rappelDots = new();
     private NVector3[] _positions = Array.Empty<NVector3>();
 
     /// <summary>For each entry of <see cref="_positions"/>, the segment it lies on.</summary>
@@ -482,7 +496,43 @@ internal sealed class RouteLine
             _positions[i] += normals[i] * SurfaceOffset;
         }
 
+        LayRappelDots();
         RebuildDots();
+    }
+
+    /// <summary>Whether the piece from control point <paramref name="segment"/> to the next is a rappel.</summary>
+    private bool IsRappel(int segment) => _points[segment + 1].Rappel;
+
+    /// <summary>Lay dots along each run of rappel pieces; the ribbon leaves those pieces out.</summary>
+    private void LayRappelDots()
+    {
+        _rappelDots.Clear();
+        var runs = new List<(int Start, int End)>();
+        var length = 0f;
+        var ribbon = RibbonSamples;
+        for (var i = 1; i < ribbon; i++)
+        {
+            // The ribbon piece ending at sample i belongs to segment _sampleSegments[i].
+            if (!IsRappel(_sampleSegments[i]))
+            {
+                continue;
+            }
+
+            var start = i - 1;
+            while (i + 1 < ribbon && IsRappel(_sampleSegments[i + 1]))
+            {
+                i++;
+            }
+
+            runs.Add((start, i));
+            length += RappelDots.Length(_positions, start, i);
+        }
+
+        var finest = MathF.Max(RappelSpacingPixels * MinWorldPerPixel, length / MaxRappelDots);
+        foreach (var (start, end) in runs)
+        {
+            RappelDots.Lay(_positions, start, end, finest, _rappelDots);
+        }
     }
 
     private void RebuildDots()
@@ -506,31 +556,35 @@ internal sealed class RouteLine
 
     private int RibbonSamples => _positions.Length >= 2 ? _positions.Length : 0;
 
+    /// <summary>Vertices in each of the two layers under the point dots: the border, then the line's colour.</summary>
+    private int LayerVertices => 2 * RibbonSamples + (RappelSegments + 1) * _rappelDots.Count;
+
     /// <summary>Vertex count, triangles and colours: these only change with the points, colour or dots shown.</summary>
     private void BuildTopology()
     {
         _topologyDirty = false;
         _positionsDirty = true;
         var ribbon = RibbonSamples;
+        var climbed = 0;
+        for (var i = 1; i < ribbon; i++)
+        {
+            climbed += IsRappel(_sampleSegments[i]) ? 0 : 1;
+        }
+
         var discVertices = DiscSegments + 1;
-        var vertexCount = 4 * ribbon + 3 * discVertices * _dots.Count;
-        var triangles = new int[(ribbon > 0 ? 12 * (ribbon - 1) : 0) + 9 * DiscSegments * _dots.Count];
+        var vertexCount = 2 * LayerVertices + 3 * discVertices * _dots.Count;
+        var triangles = new int[2 * (6 * climbed + 3 * RappelSegments * _rappelDots.Count) + 9 * DiscSegments * _dots.Count];
         var colors = new Color32[vertexCount];
         var t = 0;
         var v = 0;
         var line = new Color32(_color.r, _color.g, _color.b, 255);
         foreach (var color in new[] { _border, line })
         {
-            if (ribbon == 0)
-            {
-                break;
-            }
-
             for (var i = 0; i < ribbon; i++)
             {
                 colors[v + 2 * i] = color;
                 colors[v + 2 * i + 1] = color;
-                if (i > 0)
+                if (i > 0 && !IsRappel(_sampleSegments[i]))
                 {
                     var a = v + 2 * (i - 1);
                     var b = v + 2 * i;
@@ -544,24 +598,18 @@ internal sealed class RouteLine
             }
 
             v += 2 * ribbon;
+            for (var d = 0; d < _rappelDots.Count; d++)
+            {
+                AddDisc(triangles, ref t, colors, v, RappelSegments, color);
+                v += RappelSegments + 1;
+            }
         }
 
         for (var d = 0; d < _dots.Count; d++)
         {
             foreach (var color in new[] { _border, Ring, line })
             {
-                for (var i = 0; i < discVertices; i++)
-                {
-                    colors[v + i] = color;
-                }
-
-                for (var i = 0; i < DiscSegments; i++)
-                {
-                    triangles[t++] = v;
-                    triangles[t++] = v + 1 + i;
-                    triangles[t++] = v + 1 + (i + 1) % DiscSegments;
-                }
-
+                AddDisc(triangles, ref t, colors, v, DiscSegments, color);
                 v += discVertices;
             }
         }
@@ -572,6 +620,22 @@ internal sealed class RouteLine
         _mesh.vertices = _vertices;
         _mesh.colors32 = colors;
         _mesh.triangles = triangles;
+    }
+
+    /// <summary>A disc of one colour starting at vertex <paramref name="v"/>: its centre, then a fan of triangles around it.</summary>
+    private static void AddDisc(int[] triangles, ref int t, Color32[] colors, int v, int segments, Color32 color)
+    {
+        for (var i = 0; i <= segments; i++)
+        {
+            colors[v + i] = color;
+        }
+
+        for (var i = 0; i < segments; i++)
+        {
+            triangles[t++] = v;
+            triangles[t++] = v + 1 + i;
+            triangles[t++] = v + 1 + (i + 1) % segments;
+        }
     }
 
     /// <summary>Lay the ribbon and dots out facing the camera, a fixed number of pixels wide.</summary>
@@ -586,7 +650,7 @@ internal sealed class RouteLine
         var metresPerPixelPerDepth = 2f * MathF.Tan(camera.fieldOfView * 0.5f * MathF.PI / 180f) / Math.Max(Screen.height, 1);
 
         var ribbon = RibbonSamples;
-        var v = 0;
+        var layer = LayerVertices;
         var side = right;
         for (var i = 0; i < ribbon; i++)
         {
@@ -601,29 +665,37 @@ internal sealed class RouteLine
 
             var line = side * (LinePixels * 0.5f * unit);
             var border = side * ((LinePixels * 0.5f + BorderPixels) * unit);
-            _built[v + 2 * i] = position - border;
-            _built[v + 2 * i + 1] = position + border;
-            _built[v + 2 * ribbon + 2 * i] = position - line;
-            _built[v + 2 * ribbon + 2 * i + 1] = position + line;
+            _built[2 * i] = position - border;
+            _built[2 * i + 1] = position + border;
+            _built[layer + 2 * i] = position - line;
+            _built[layer + 2 * i + 1] = position + line;
         }
 
-        v += 4 * ribbon;
+        var v = 2 * ribbon;
+        foreach (var dot in _rappelDots)
+        {
+            var (center, depth) = TowardCamera(dot.Position, eye, forward, near);
+            var unit = MathF.Max(depth * metresPerPixelPerDepth * pixelsPerReference, MinWorldPerPixel);
+            // Seen end-on, the dots bunch up on screen, so they need to be further apart along the line.
+            var across = MathF.Max(NVector3.Cross(dot.Direction, NVector3.Normalize(center - eye)).Length(), 1e-3f);
+            // Hidden dots shrink to nothing, which draws nothing.
+            var size = RappelDots.Scale(dot, RappelSpacingPixels * unit / across) * unit;
+            LayDisc(v, center, right, up, RappelCircle, (RappelDotPixels + BorderPixels) * size);
+            LayDisc(layer + v, center, right, up, RappelCircle, RappelDotPixels * size);
+            v += RappelSegments + 1;
+        }
+
+        v = 2 * layer;
         foreach (var dot in _dots)
         {
             var (center, depth) = TowardCamera(dot.Position, eye, forward, near);
             var scale = dot.Point == _selected ? SelectedScale : dot.Point == _hovered ? HoveredScale : 1f;
             var unit = MathF.Max(depth * metresPerPixelPerDepth * pixelsPerReference, MinWorldPerPixel) * scale;
-            for (var layer = 0; layer < 3; layer++)
+            for (var ring = 0; ring < 3; ring++)
             {
                 // Border, white ring, coloured fill.
-                var radius = dot.Fill + (layer < 2 ? dot.Ring : 0f) + (layer == 0 ? BorderPixels : 0f);
-                _built[v] = center;
-                for (var i = 0; i < DiscSegments; i++)
-                {
-                    var angle = 2f * MathF.PI * i / DiscSegments;
-                    _built[v + 1 + i] = center + (right * MathF.Cos(angle) + up * MathF.Sin(angle)) * (radius * unit);
-                }
-
+                var radius = dot.Fill + (ring < 2 ? dot.Ring : 0f) + (ring == 0 ? BorderPixels : 0f);
+                LayDisc(v, center, right, up, DiscCircle, radius * unit);
                 v += DiscSegments + 1;
             }
         }
@@ -643,6 +715,28 @@ internal sealed class RouteLine
         {
             _mesh.bounds = new Bounds(RouteOverlay.ToUnity((min + max) * 0.5f), RouteOverlay.ToUnity(max - min));
         }
+    }
+
+    /// <summary>A camera-facing disc's vertices, starting at <paramref name="v"/>: its centre, then its edge.</summary>
+    private void LayDisc(int v, NVector3 center, NVector3 right, NVector3 up, NVector2[] circle, float radius)
+    {
+        _built[v] = center;
+        for (var i = 0; i < circle.Length; i++)
+        {
+            _built[v + 1 + i] = center + (right * circle[i].X + up * circle[i].Y) * radius;
+        }
+    }
+
+    private static NVector2[] Circle(int segments)
+    {
+        var points = new NVector2[segments];
+        for (var i = 0; i < segments; i++)
+        {
+            var angle = 2f * MathF.PI * i / segments;
+            points[i] = new NVector2(MathF.Cos(angle), MathF.Sin(angle));
+        }
+
+        return points;
     }
 
     /// <summary>

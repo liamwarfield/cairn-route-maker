@@ -51,7 +51,8 @@ internal static class EditorHud
             $"{ModControls.LevelSelect.PadName} level select   {ModControls.Exit.PadName} or L3+R3 exit   {ModControls.ToggleFreecam.PadName} freecam";
 
         _lineKeyboardHelp = move +
-            $"Hold {ModControls.Look.KeyName} look   {ModControls.Paint.KeyName} add point, or drag a point or the line\n" +
+            $"Hold {ModControls.Look.KeyName} look   {ModControls.Paint.KeyName} add point, or drag a point or the line   " +
+            $"{ModControls.Rappel.KeyName} rappel\n" +
             $"{ModControls.NewLine.KeyName} new line   {ModControls.LineColor.KeyName} line colour   " +
             $"{ModControls.DeletePoint.KeyName} delete point   Ctrl+{ModControls.DeletePoint.KeyName} delete line\n" +
             $"{ModControls.CycleBrush.KeyName} or {tools} tool   {ModControls.SetStart.KeyName} set start   " +
@@ -61,7 +62,8 @@ internal static class EditorHud
             $"{ModControls.ToggleFreecam.KeyName} freecam";
 
         _lineGamepadHelp = padMove +
-            $"{ModControls.Paint.PadName} add point, or drag a point or the line   {ModControls.CycleBrush.PadName} tool\n" +
+            $"{ModControls.Paint.PadName} add point, or drag a point or the line   {ModControls.Rappel.PadName} rappel   " +
+            $"{ModControls.CycleBrush.PadName} tool\n" +
             $"{ModControls.LineColor.PadName} line colour (hold: new line)   {ModControls.DeletePoint.PadName} delete point (hold: delete line)\n" +
             $"{ModControls.Undo.PadName} undo   " +
             $"{ModControls.SetStart.PadName} set start   {ModControls.SetFinish.PadName} set finish   " +
