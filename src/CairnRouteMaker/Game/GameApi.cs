@@ -90,7 +90,8 @@ internal static class GameApi
     /// <param name="PlacedFromGround">
     /// Set by the game on limbs it plants for her while she steps from the ground onto the wall.
     /// </param>
-    public readonly record struct LimbGrip(bool Holding, Vector3 Anchor, bool IsFoot, bool PlacedFromGround);
+    /// <param name="Reaching">The player is moving this limb towards a new hold (so it isn't holding).</param>
+    public readonly record struct LimbGrip(bool Holding, Vector3 Anchor, bool IsFoot, bool PlacedFromGround, bool Reaching);
 
     private static readonly ClimbingPawnCairnIK.IKLimbTarget[] LimbOrder =
     {
@@ -114,9 +115,10 @@ internal static class GameApi
         for (var i = 0; i < LimbOrder.Length; i++)
         {
             var limb = controller.GetLimb(LimbOrder[i]);
-            grips[i] = limb != null && limb.CurrentState == ClimbingV2PawnLimb.LimbState.Holding
-                ? new LimbGrip(true, limb.CurrentGrabAnchorPosition, limb.IsFoot, limb.IsOnInitialHoldFromGround)
-                : default;
+            var state = limb == null ? ClimbingV2PawnLimb.LimbState.None : limb.CurrentState;
+            grips[i] = state == ClimbingV2PawnLimb.LimbState.Holding
+                ? new LimbGrip(true, limb.CurrentGrabAnchorPosition, limb.IsFoot, limb.IsOnInitialHoldFromGround, false)
+                : new LimbGrip(false, default, false, false, state == ClimbingV2PawnLimb.LimbState.Reaching);
         }
 
         return true;
@@ -1143,6 +1145,12 @@ internal static class GameApi
     }
 
     /// <summary>
+    /// Raised when <see cref="TryTeleportAva"/> has sent Ava somewhere. She has usually landed by then,
+    /// but a warp started while the world is busy lands once it's done.
+    /// </summary>
+    public static event Action<Placement> Teleported;
+
+    /// <summary>
     /// Put Ava at a point on the rock using the game's own free-roam warp (what its map uses): it
     /// shows a loading screen, takes her off the wall, unclips the rope from the last piton, stows
     /// ice tools, brings the Climbot along and respawns her if needed. On a wall the warp puts her
@@ -1156,7 +1164,13 @@ internal static class GameApi
         }
 
         var placement = PlaceAva(point, yawDegrees);
-        return TryWarp(placement) || TryHop(placement, out reason);
+        if (!TryWarp(placement) && !TryHop(placement, out reason))
+        {
+            return false;
+        }
+
+        Teleported?.Invoke(placement);
+        return true;
     }
 
     /// <summary>

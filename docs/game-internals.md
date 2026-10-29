@@ -86,7 +86,7 @@ Read by disassembly; the free-climb fix is confirmed in game.
 - `ClimbingV2PawnController.limbs` / `hands` / `feet` / `GetLimb(IKLimbTarget)`. **sig**
 - Each `ClimbingV2PawnLimb` is a plain object with:
   - `limb` (`IKLimbTarget { LeftHand, RightHand, LeftFoot, RightFoot }`).
-  - `CurrentState` (`LimbState`, where `Holding = 2`).
+  - `CurrentState` (`LimbState`: `None`, `Idle`, `Holding = 2`, `Reaching`, `GoingToHold`, `GoingToHoldIceClimbing`, `RestoreIceClimbing`, `LowGravityStarsClimbing`).
   - `LastHeldGrab` and `currentClosestWallHit` (a `RaycastHit`). **sig**
 - A grab (`ClimbingV2HoldGrab`) has `hold`, `anchorPosition`, `anchorRotation`. A hold (`ClimbingV2Hold`) has `id` (stable and position-derived for hand-placed holds) and `dynamic` (true for holds generated on bare rock). **sig**
 - Hooks, best first:
@@ -103,6 +103,7 @@ Read by disassembly; the free-climb fix is confirmed in game.
   - `switcher.climbingPawnController.GetLimb(ClimbingPawnCairnIK.IKLimbTarget)`. Both enums are nested in the interop: `ClimbingPawnCairnIK.IKLimbTarget` and `ClimbingV2PawnLimb.LimbState`.
   - `limb.CurrentGrabAnchorPosition` is where the limb is attached; `limb.IsFoot` tells feet from hands.
   - `limb.IsOnInitialHoldFromGround` marks limbs the game places itself while Ava steps from the ground onto the wall. Feet with it set are ignored, since they are often on the ground.
+  - A limb in `Reaching` is one the player is moving. After a teleport puts Ava on the wall, the first limb seen reaching starts the route clock. Confirmed in game on the free-climb start.
 
 ## Climbable surfaces (brush raycast)
 

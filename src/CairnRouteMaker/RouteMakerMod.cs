@@ -40,6 +40,7 @@ public sealed class RouteMakerMod : MelonMod
         var directory = Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Routes");
         _storage = new RouteStorage(directory);
         _attempt = new AttemptTracker(_storage.Bests);
+        GameApi.Teleported += placement => _attempt.OnTeleported(placement, _editor?.Route);
         ModControls.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Controls.json"));
         _session = new FreeClimbSession(_traveler);
         _session.Started += OnFreeClimbStarted;
@@ -225,10 +226,11 @@ public sealed class RouteMakerMod : MelonMod
         }
         else if (ModControls.GoToStart.KeyPressed)
         {
-            // Going back to the start is how to give up on an attempt and try again.
+            // Going back to the start is how to give up on an attempt and try again. Reset first: the
+            // teleport sets up the next attempt, which waits for her on a wall start.
+            _attempt.Reset();
             EnsureEditor();
             _editor.PlayTest();
-            _attempt.Reset();
         }
         else if (ModControls.ToggleFreecam.KeyPressed)
         {
