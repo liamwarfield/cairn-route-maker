@@ -85,6 +85,9 @@ internal sealed class EditorInput
 
     // Menu navigation (level select).
     public int MenuMove { get; private set; }
+
+    /// <summary>Left (-1) or right (+1): changes the highlighted setting's value.</summary>
+    public int MenuAdjust { get; private set; }
     public bool MenuConfirm { get; private set; }
     public bool MenuBack { get; private set; }
     public bool MenuEdit { get; private set; }
@@ -130,7 +133,7 @@ internal sealed class EditorInput
         SelectBrush = null;
         SetStart = SetFinish = Undo = Save = PlayTest = Close = LevelSelect = Teleport = ToggleFreecam = false;
         DeletePoint = ClearLine = ToggleLine = CycleLineColor = NewLine = ToggleRappel = false;
-        MenuMove = 0;
+        MenuMove = MenuAdjust = 0;
         MenuConfirm = MenuBack = MenuEdit = MenuClick = false;
 
         if (keyboard != null && mouse != null)
@@ -194,6 +197,8 @@ internal sealed class EditorInput
 
             if (keyboard.upArrowKey.wasPressedThisFrame || ModControls.MoveForward.KeyPressed) MenuMove -= 1;
             if (keyboard.downArrowKey.wasPressedThisFrame || ModControls.MoveBack.KeyPressed) MenuMove += 1;
+            if (keyboard.leftArrowKey.wasPressedThisFrame || ModControls.MoveLeft.KeyPressed) MenuAdjust -= 1;
+            if (keyboard.rightArrowKey.wasPressedThisFrame || ModControls.MoveRight.KeyPressed) MenuAdjust += 1;
             MenuConfirm |= keyboard.enterKey.wasPressedThisFrame || keyboard.spaceKey.wasPressedThisFrame;
             MenuBack |= ModControls.Exit.KeyPressed || ModControls.LevelSelect.KeyPressed;
             MenuEdit |= ModControls.EditRoute.KeyPressed;
@@ -278,6 +283,8 @@ internal sealed class EditorInput
 
             if (pad.dpad.up.wasPressedThisFrame || pad.leftStick.up.wasPressedThisFrame) MenuMove -= 1;
             if (pad.dpad.down.wasPressedThisFrame || pad.leftStick.down.wasPressedThisFrame) MenuMove += 1;
+            if (pad.dpad.left.wasPressedThisFrame || pad.leftStick.left.wasPressedThisFrame) MenuAdjust -= 1;
+            if (pad.dpad.right.wasPressedThisFrame || pad.leftStick.right.wasPressedThisFrame) MenuAdjust += 1;
             MenuConfirm |= pad.buttonSouth.wasPressedThisFrame;
             MenuBack |= ModControls.Exit.PadPressed || ModControls.LevelSelect.PadPressed;
             MenuEdit |= ModControls.EditRoute.PadPressed;

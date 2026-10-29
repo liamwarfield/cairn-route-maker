@@ -30,6 +30,9 @@ internal static class LevelSelectView
     private const float HeaderGap = 18f;
     private const float NoteGap = 18f;
 
+    /// <summary>Where a setting's value starts, past the label; long labels push it further.</summary>
+    private const float ValueColumn = 520f;
+
     /// <summary>Colour swatch side and the gap after each, as fractions of the font size.</summary>
     private const float SwatchSize = 0.55f;
     private const float SwatchGap = 0.25f;
@@ -75,8 +78,9 @@ internal static class LevelSelectView
     private static MenuStyle _style;
     private static LevelSelect _shownMenu;
     private static int _shownPage = -1;
+    private static int _shownRevision = -1;
     private static int _shownFrame = -1;
-    private static (bool Gamepad, int Version, bool Typing, bool Editable)? _shownHints;
+    private static (bool Gamepad, int Version, bool Typing, bool Editable, bool Adjustable)? _shownHints;
     private static string _shownDescription;
     private static float _scroll;
     private static float _arrowY;
@@ -91,6 +95,7 @@ internal static class LevelSelectView
     {
         public RectTransform Rect;
         public TextMeshProUGUI Label;
+        public TextMeshProUGUI Value;
         public TextMeshProUGUI Note;
         public Image[] Swatches;
         public float Top;
@@ -137,7 +142,11 @@ internal static class LevelSelectView
         _canvas.scaleFactor = Screen.height / ReferenceHeight;
         if (menu != _shownMenu || menu.Page != _shownPage)
         {
-            Rebuild(menu, input);
+            Rebuild(menu, input, fresh: true);
+        }
+        else if (menu.Revision != _shownRevision)
+        {
+            Rebuild(menu, input, fresh: false);
         }
 
         ShowHints(menu, input.UsingGamepad);
@@ -173,7 +182,8 @@ internal static class LevelSelectView
     {
         var typing = menu.TextEntry != null;
         var editable = !typing && menu.Current?.Edit != null;
-        var shown = (gamepad, ModControls.Version, typing, editable);
+        var adjustable = !typing && menu.Current?.Adjust != null;
+        var shown = (gamepad, ModControls.Version, typing, editable, adjustable);
         if (_shownHints == shown)
         {
             return;
@@ -190,7 +200,9 @@ internal static class LevelSelectView
         }
         else
         {
-            hints = (gamepad ? Hint("D-pad", "Choose") + Hint("A", "Select") : Hint("Arrows", "Choose") + Hint("Enter", "Select"))
+            hints = (adjustable
+                    ? gamepad ? Hint("D-pad up/down", "Choose") + Hint("D-pad left/right", "Change") : Hint("Up/Down", "Choose") + Hint("Left/Right", "Change")
+                    : gamepad ? Hint("D-pad", "Choose") + Hint("A", "Select") : Hint("Arrows", "Choose") + Hint("Enter", "Select"))
                 + (editable ? Hint(gamepad ? ModControls.EditRoute.PadName : ModControls.EditRoute.KeyName, "Edit route") : "")
                 + Hint(gamepad ? ModControls.Exit.PadName : ModControls.Exit.KeyName, "Back");
         }
@@ -325,6 +337,7 @@ internal static class LevelSelectView
             row.Label.rectTransform.anchoredPosition = new Vector2(eased * _style.SelectedOffsetX, 0f);
             var color = row.Enabled ? Color.Lerp(_style.NotSelected, _style.Selected, eased) : WithAlpha(_style.NotSelected, DisabledAlpha);
             row.Label.color = color;
+            row.Value.color = color;
             row.Note.color = WithAlpha(color, color.a * 0.65f);
         }
 
@@ -373,13 +386,22 @@ internal static class LevelSelectView
         return Mathf.Clamp(row.Top + row.Height / 2f - ViewportHeight / 2f, 0f, max);
     }
 
-    private static void Rebuild(LevelSelect menu, EditorInput input)
+    /// <summary>
+    /// Lay out the page's rows. A <paramref name="fresh"/> page fades in with its highlight
+    /// reset; otherwise only the rows' text changed, and the fade, highlight and scroll carry on.
+    /// </summary>
+    private static void Rebuild(LevelSelect menu, EditorInput input, bool fresh)
     {
         _style = MenuStyle.Current;
         _shownMenu = menu;
         _shownPage = menu.Page;
-        _pageTime = 0f;
-        _bouncedFor = -1;
+        _shownRevision = menu.Revision;
+        if (fresh)
+        {
+            _pageTime = 0f;
+            _bouncedFor = -1;
+        }
+
         _lastPointer = input.PointerPosition;
 
         var size = _style.FontSize;
@@ -410,7 +432,11 @@ internal static class LevelSelectView
             var row = RowFor(i);
             row.Header = entry.IsHeader;
             row.Enabled = entry.Enabled;
-            row.Selection = 0f;
+            if (fresh)
+            {
+                row.Selection = 0f;
+            }
+
             if (row.Header && i > 0)
             {
                 y += HeaderGap;
@@ -429,6 +455,7 @@ internal static class LevelSelectView
                 label.fontStyle = FontStyles.UpperCase;
                 label.characterSpacing = 12f;
                 label.alignment = TextAlignmentOptions.BottomLeft;
+                row.Value.gameObject.SetActive(false);
                 row.Note.gameObject.SetActive(false);
                 PlaceSwatches(row, null, 0f, size);
                 continue;
@@ -441,9 +468,18 @@ internal static class LevelSelectView
 
             var note = row.Note;
             SetText(note, entry.Note, size * 0.5f, _style.NotSelected);
-            var afterLabel = entry.Note != null || entry.Swatches != null
+            var afterLabel = entry.Note != null || entry.Swatches != null || entry.Value != null
                 ? Mathf.Min(label.GetPreferredValues(entry.Label).x, label.rectTransform.rect.width) + NoteGap
                 : 0f;
+            var value = row.Value;
+            SetText(value, entry.Value, size, _style.NotSelected);
+            if (entry.Value != null)
+            {
+                afterLabel = Mathf.Max(afterLabel, ValueColumn);
+                value.rectTransform.anchoredPosition = new Vector2(afterLabel, 0f);
+                afterLabel += value.GetPreferredValues(entry.Value).x + NoteGap;
+            }
+
             note.rectTransform.anchoredPosition = new Vector2(PlaceSwatches(row, entry.Swatches, afterLabel, size), 0f);
         }
 
@@ -455,9 +491,12 @@ internal static class LevelSelectView
         }
 
         _content.sizeDelta = new Vector2(ListWidth, _contentHeight);
-        var selected = menu.Selected >= 0 && menu.Selected < _rowCount ? menu.Selected : -1;
-        _scroll = TargetScroll(selected);
-        _arrow.gameObject.SetActive(false);
+        if (fresh)
+        {
+            var selected = menu.Selected >= 0 && menu.Selected < _rowCount ? menu.Selected : -1;
+            _scroll = TargetScroll(selected);
+            _arrow.gameObject.SetActive(false);
+        }
     }
 
     private static Row RowFor(int index)
@@ -472,14 +511,22 @@ internal static class LevelSelectView
             labelRect.pivot = new Vector2(0f, 0.5f);
             labelRect.sizeDelta = new Vector2(ListWidth - 260f, 0f);
 
-            // A child of the label, so it slides with it.
+            // Children of the label, so they slide with it.
+            var value = NewText("Value", labelRect);
+            value.alignment = TextAlignmentOptions.MidlineLeft;
+            var valueRect = value.rectTransform;
+            valueRect.anchorMin = new Vector2(0f, 0f);
+            valueRect.anchorMax = new Vector2(0f, 1f);
+            valueRect.pivot = new Vector2(0f, 0.5f);
+            valueRect.sizeDelta = new Vector2(400f, 0f);
+
             var note = NewText("Note", labelRect);
             note.alignment = TextAlignmentOptions.MidlineLeft;
             var noteRect = note.rectTransform;
             noteRect.anchorMin = new Vector2(0f, 0f);
             noteRect.anchorMax = new Vector2(0f, 1f);
             noteRect.pivot = new Vector2(0f, 0.5f);
-            noteRect.sizeDelta = new Vector2(600f, 0f);
+            noteRect.sizeDelta = new Vector2(900f, 0f);
 
             // Also children of the label: plain squares tinted with the entry's colours.
             var swatches = new Image[MaxSwatches];
@@ -493,7 +540,7 @@ internal static class LevelSelectView
                 swatchRect.gameObject.SetActive(false);
             }
 
-            Rows.Add(new Row { Rect = rect, Label = label, Note = note, Swatches = swatches });
+            Rows.Add(new Row { Rect = rect, Label = label, Value = value, Note = note, Swatches = swatches });
         }
 
         return Rows[index];

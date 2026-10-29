@@ -91,7 +91,7 @@ internal sealed class FreeClimbLauncher
             return;
         }
 
-        if (_menu.UpdateTextEntry())
+        if (_menu.UpdateTextEntry() || _menu.TryAdjust(_input.MenuAdjust))
         {
             return;
         }
@@ -118,11 +118,11 @@ internal sealed class FreeClimbLauncher
         {
             _menu.Select(clicked);
             _menu.ClickedIndex = null;
-            _menu.Current?.Choose();
+            _menu.Choose();
         }
         else if (_input.MenuConfirm)
         {
-            _menu.Current?.Choose();
+            _menu.Choose();
         }
     }
 

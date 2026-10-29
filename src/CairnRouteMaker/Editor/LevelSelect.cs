@@ -17,15 +17,16 @@ namespace CairnRouteMaker.Editor;
 /// the free-climb launcher instead: a mountain, a zone, then one of its routes or a spawn point to
 /// start from without one. The route settings (see <see cref="PaintColors"/>) have pages of their own,
 /// opened from the Routes tab of the game's Settings (see <see cref="PaintColorsMenu"/>).
-/// Wherever a route is listed, the Edit route button (Y / E by default) opens its Edit Route page,
-/// and its personal best time is noted beside it once it has one. Pages are rebuilt each time they show.
+/// Wherever a route is listed, the Edit route button (Y / E by default) opens its Edit Route page and
+/// from there its Loadout page (see LevelSelect.Loadout.cs), and its personal best time is noted
+/// beside it once it has one. Pages are rebuilt each time they show.
 /// </summary>
-internal sealed class LevelSelect
+internal sealed partial class LevelSelect
 {
     public sealed class Entry
     {
         public Entry(string label, bool isHeader, bool enabled, Action choose, bool leavesEditor = false, string note = null,
-            IReadOnlyList<Color32> swatches = null, Action edit = null, string detail = null)
+            IReadOnlyList<Color32> swatches = null, Action edit = null, string detail = null, string value = null, Action<int> adjust = null)
         {
             Label = label;
             IsHeader = isHeader;
@@ -36,6 +37,8 @@ internal sealed class LevelSelect
             Swatches = swatches;
             Edit = edit;
             Detail = detail;
+            Value = value;
+            Adjust = adjust;
         }
 
         public string Label { get; }
@@ -57,6 +60,15 @@ internal sealed class LevelSelect
 
         /// <summary>Shown in place of the page's description while this entry is highlighted, e.g. a route's description; or null.</summary>
         public string Detail { get; }
+
+        /// <summary>A setting's current value, shown in a column after the label; or null.</summary>
+        public string Value { get; }
+
+        /// <summary>
+        /// Steps the value by -1 or +1 (left and right in the menu), or null if it has none. Choosing
+        /// an entry with one steps it forward.
+        /// </summary>
+        public Action<int> Adjust { get; }
     }
 
     /// <summary>Where to start a free-climb game; with a route, Ava is then taken to its start.</summary>
@@ -89,6 +101,7 @@ internal sealed class LevelSelect
     private Traveler _traveler;
     private Action<string> _report;
     private Action<LaunchTarget> _launch;
+    private bool _refreshing;
 
     public bool IsOpen { get; private set; }
     public string Title { get; private set; }
@@ -101,6 +114,9 @@ internal sealed class LevelSelect
 
     /// <summary>Goes up each time a page is shown, so the view knows to rebuild.</summary>
     public int Page { get; private set; }
+
+    /// <summary>Goes up when the page's entries change in place (a value was adjusted), so the view updates them without a fade.</summary>
+    public int Revision { get; private set; }
     public IReadOnlyList<Entry> Entries => _entries;
     public int Selected { get; private set; }
 
@@ -152,6 +168,35 @@ internal sealed class LevelSelect
 
     /// <summary>The Edit route button: edit the highlighted route, if it is one.</summary>
     public void Edit() => Current?.Edit?.Invoke();
+
+    /// <summary>
+    /// Left or right on the highlighted entry: step its value, if it has one. Returns true if it
+    /// did, and then the same press shouldn't also go back (D-pad left is the gamepad's back button).
+    /// </summary>
+    public bool TryAdjust(int direction)
+    {
+        if (direction == 0 || Current?.Adjust is not { } adjust)
+        {
+            return false;
+        }
+
+        adjust(Math.Sign(direction));
+        return true;
+    }
+
+    /// <summary>Run the highlighted entry: an entry with a value steps it forward.</summary>
+    public void Choose()
+    {
+        var entry = Current;
+        if (entry?.Adjust != null)
+        {
+            entry.Adjust(1);
+        }
+        else
+        {
+            entry?.Choose?.Invoke();
+        }
+    }
 
     /// <summary>
     /// Type into the page's text box, if it has one. Returns true if it did, and then the menu's
@@ -485,6 +530,8 @@ internal sealed class LevelSelect
         Add(new Entry("Description", false, true, () => Push(page, () => ShowTextField(route, "Description", "A line or two about the route. Leave it empty for none.",
             route.Description, MaxDescriptionLength, text => SetDescription(route, text))),
             note: route.Description == null ? "none" : null, detail: route.Description));
+        Add(new Entry("Loadout", false, true, () => Push(page, () => ShowLoadout(route)), note: LoadoutSummary(route.Loadout),
+            detail: "How Ava starts on this route: health, grip, end game, survival needs and items."));
         Add(new Entry("Duplicate", false, true, () => Duplicate(route)));
         if (_storage.Bests.Get(route.Id) is { } best)
         {
@@ -794,19 +841,10 @@ internal sealed class LevelSelect
     private void GoWithoutRoute(StreamingTweakables.World world, string zone)
     {
         _editor.ShowRoute(null);
-        _traveler.Start(world, zone, null, 0f, _report);
+        _traveler.Start(world, zone, _report);
     }
 
-    private void TravelTo(Route route)
-    {
-        if (!TryParseZone(route.ZoneKey, out var world, out var zone))
-        {
-            return;
-        }
-
-        var start = route.Start;
-        _traveler.Start(world, zone, start == null ? null : RouteOverlay.ToUnity(start.Position), start?.YawDegrees ?? 0f, _report);
-    }
+    private void TravelTo(Route route) => _traveler.StartToRoute(route, _report);
 
     private static bool TryParseZone(string zoneKey, out StreamingTweakables.World world, out string zone)
     {
@@ -823,12 +861,47 @@ internal sealed class LevelSelect
         next();
     }
 
+    /// <summary>
+    /// Show <paramref name="page"/> again after one of its values changed, keeping the highlight on
+    /// the same entry. If it has the same number of entries it's updated in place, without the fade.
+    /// </summary>
+    private void Refresh(Action page)
+    {
+        var selected = Selected;
+        var count = _entries.Count;
+        var shownPage = Page;
+        _refreshing = true;
+        try
+        {
+            page();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+
+        if (_entries.Count != count)
+        {
+            Page = shownPage + 1;
+        }
+
+        Select(selected);
+    }
+
     private void Begin(string title, string breadcrumb = null, string description = null)
     {
         Title = title;
         Breadcrumb = breadcrumb;
         Description = description;
-        Page++;
+        if (_refreshing)
+        {
+            Revision++;
+        }
+        else
+        {
+            Page++;
+        }
+
         _entries.Clear();
         ClickedIndex = null;
         TextEntry = null;

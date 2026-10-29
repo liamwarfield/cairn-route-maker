@@ -7,9 +7,10 @@ using UnityEngine;
 namespace CairnRouteMaker.Editor;
 
 /// <summary>
-/// Gets Ava to a world, zone and optionally an exact spot, one loading screen at a time:
-/// travel to the world if needed, then to the zone, then teleport once she's standing.
-/// Each step waits for the game to finish streaming before the next one starts.
+/// Gets Ava to a world, zone and optionally a route's start, one loading screen at a time:
+/// travel to the world if needed, then to the zone, then teleport once she's standing and set
+/// her up in the route's loadout. Each step waits for the game to finish streaming before the
+/// next one starts.
 /// </summary>
 internal sealed class Traveler
 {
@@ -28,6 +29,7 @@ internal sealed class Traveler
     private string _zone;
     private Vector3? _position;
     private float _yaw;
+    private Loadout _loadout;
     private Action<string> _report;
     private string _issued;
     private float _stepStarted;
@@ -38,13 +40,16 @@ internal sealed class Traveler
 
     public string Destination => _zone != null ? ZoneNames.Pretty(_zone) : ZoneNames.PrettyWorld(_world.ToString());
 
-    /// <summary>Go to a world, optionally a zone in it, optionally an exact standing spot there.</summary>
-    public void Start(StreamingTweakables.World world, string zone, Vector3? position, float yaw, Action<string> report)
+    /// <summary>Go to a world, and optionally a zone in it, leaving Ava wherever the game puts her.</summary>
+    public void Start(StreamingTweakables.World world, string zone, Action<string> report) => Begin(world, zone, null, 0f, null, report);
+
+    private void Begin(StreamingTweakables.World world, string zone, Vector3? position, float yaw, Loadout loadout, Action<string> report)
     {
         _world = world;
         _zone = zone;
         _position = position;
         _yaw = yaw;
+        _loadout = loadout;
         _report = report;
         _issued = null;
         _stepStarted = Time.unscaledTime;
@@ -53,7 +58,7 @@ internal sealed class Traveler
         IsActive = true;
     }
 
-    /// <summary>Go to a route's zone, and onto its start if it has one.</summary>
+    /// <summary>Go to a route's zone, and onto its start in the route's loadout if it has a start.</summary>
     /// <returns>False, without starting, if the route's zone key doesn't name a known world.</returns>
     public bool StartToRoute(Route route, Action<string> report)
     {
@@ -63,7 +68,7 @@ internal sealed class Traveler
         }
 
         var start = route.Start;
-        Start(world, zone, start == null ? null : RouteOverlay.ToUnity(start.Position), start?.YawDegrees ?? 0f, report);
+        Begin(world, zone, start == null ? null : RouteOverlay.ToUnity(start.Position), start?.YawDegrees ?? 0f, route.Loadout, report);
         return true;
     }
 
@@ -118,10 +123,10 @@ internal sealed class Traveler
 
         if (_position != null)
         {
-            // A trip to an exact spot is a route start, so Ava arrives fresh as well.
+            // A trip to an exact spot is a route start, so Ava arrives set up for the route.
             if (GameApi.TryTeleportAva(_position.Value, _yaw, out var reason))
             {
-                GameApi.RestoreAva();
+                AvaLoadout.Apply(_loadout);
                 Finish($"Arrived at {Destination}.");
             }
             else
