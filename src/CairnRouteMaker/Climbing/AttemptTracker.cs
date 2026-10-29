@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using CairnRouteMaker.Editor;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
@@ -24,6 +25,7 @@ internal enum NextGrabStatus
 /// climbing, and each hand or foot that has just attached. Only attachments count against the
 /// route, not limbs swinging across paint, so this watches for limbs starting to hold. It also
 /// checks the hold the moving limb is heading for, so the player can see a bad grab coming.
+/// Finishing without going off-route keeps the time if it's the route's personal best.
 /// </summary>
 internal sealed class AttemptTracker
 {
@@ -41,19 +43,29 @@ internal sealed class AttemptTracker
 
     /// <summary>The last predicted grab for each limb, compared with where it lands in the log.</summary>
     private readonly GameApi.NextGrab?[] _predicted = new GameApi.NextGrab?[4];
+    private readonly PersonalBests _bests;
     private Route _route;
     private bool _broken;
+
+    public AttemptTracker(PersonalBests bests) => _bests = bests;
 
     public Attempt Attempt { get; } = new();
 
     /// <summary>The route being attempted, or null.</summary>
     public Route Route => _route;
 
+    /// <summary>The route's best time in seconds, or null if it hasn't been finished on-route yet.</summary>
+    public double? Best => _bests.Get(_route?.Id);
+
+    /// <summary>The attempt just finished set the route's best time.</summary>
+    public bool NewBest { get; private set; }
+
     public NextGrabStatus NextGrab { get; private set; }
 
     public void Reset()
     {
         Attempt.Reset();
+        NewBest = false;
         NextGrab = NextGrabStatus.Hidden;
         Array.Clear(_previous);
         Array.Clear(_predicted);
@@ -98,13 +110,31 @@ internal sealed class AttemptTracker
 
         UpdateNextGrab(route, climbing);
 
+        // Grabs only count while the clock runs, so check them before the finish can stop it this
+        // frame, or after the clock starts if it wasn't running.
+        var wasClimbing = Attempt.State == AttemptState.Climbing;
+        if (wasClimbing)
+        {
+            CheckGrabs(route, now);
+        }
+
         var root = RouteOverlay.ToNumerics(position);
         var top = root + System.Numerics.Vector3.UnitY * BodyHeight;
         if (Attempt.Update(route, now, root, top, climbing))
         {
+            NewBest = Attempt.State == AttemptState.Finished && RecordBest(route, Attempt.Elapsed(now));
             LogState(now);
         }
 
+        if (!wasClimbing)
+        {
+            CheckGrabs(route, now);
+        }
+    }
+
+    /// <summary>Check each hand or foot that has just attached against the route.</summary>
+    private void CheckGrabs(Route route, double now)
+    {
         for (var i = 0; i < _grips.Length; i++)
         {
             var grip = _grips[i];
@@ -126,6 +156,27 @@ internal sealed class AttemptTracker
             {
                 MelonLogger.Msg($"Failed to stay on route: {(grip.IsFoot ? "foot" : "hand")} attached off-route at {grip.Anchor} after {Attempt.FormatTime(Attempt.Elapsed(now))}.");
             }
+        }
+    }
+
+    /// <summary>Keep the time of a finish that stayed on-route if it beats the route's best.</summary>
+    /// <returns>True if it's the new best.</returns>
+    private bool RecordBest(Route route, double seconds)
+    {
+        if (Attempt.OffRoute)
+        {
+            return false;
+        }
+
+        try
+        {
+            return _bests.Record(route.Id, seconds, DateTime.Now);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Not a reason to stop timing.
+            MelonLogger.Error($"Couldn't save the personal best: {e.Message}");
+            return false;
         }
     }
 
@@ -168,16 +219,16 @@ internal sealed class AttemptTracker
         switch (Attempt.State)
         {
             case AttemptState.Ready:
-                MelonLogger.Msg("At the route start. The timer starts when Ava starts climbing.");
+                MelonLogger.Msg("Ready: the timer starts when Ava starts climbing.");
                 break;
             case AttemptState.Climbing:
                 MelonLogger.Msg("Route attempt started.");
                 break;
             case AttemptState.Finished:
                 var time = Attempt.FormatTime(Attempt.Elapsed(now));
-                MelonLogger.Msg(Attempt.OffRoute
-                    ? $"Reached the finish in {time}, but failed to stay on route."
-                    : $"Route complete in {time}!");
+                MelonLogger.Msg(Attempt.OffRoute ? $"Reached the finish in {time}, but failed to stay on route."
+                    : NewBest ? $"Route complete in {time}! New personal best."
+                    : $"Route complete in {time}! Personal best: {Attempt.FormatTime(Best ?? 0)}.");
                 break;
         }
     }

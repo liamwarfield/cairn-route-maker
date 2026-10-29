@@ -17,8 +17,8 @@ namespace CairnRouteMaker.Editor;
 /// the free-climb launcher instead: a mountain, a zone, then one of its routes or a spawn point to
 /// start from without one. The route settings (see <see cref="PaintColors"/>) have pages of their own,
 /// opened from the Routes tab of the game's Settings (see <see cref="PaintColorsMenu"/>).
-/// Wherever a route is listed, the Edit route button (Y / E by default) opens its Edit Route page.
-/// Pages are rebuilt each time they show.
+/// Wherever a route is listed, the Edit route button (Y / E by default) opens its Edit Route page,
+/// and its personal best time is noted beside it once it has one. Pages are rebuilt each time they show.
 /// </summary>
 internal sealed class LevelSelect
 {
@@ -320,7 +320,7 @@ internal sealed class LevelSelect
     /// <summary>A route to switch to: choosing it shows it and takes Ava to its start. <paramref name="page"/> is the page it's on.</summary>
     private Entry RouteEntry(Route route, Action page) =>
         new(route.Name, false, TryParseZone(route.ZoneKey, out _, out _), () => Climb(route), leavesEditor: true,
-            note: Notes(_editor.IsShowing(route) ? "showing" : null, route.Start == null ? "no start set" : null),
+            note: Notes(_editor.IsShowing(route) ? "climbing" : null, Best(route), route.Start == null ? "no start set" : null),
             edit: EditAction(route, page), detail: route.Description);
 
     private void ShowLaunch()
@@ -381,7 +381,7 @@ internal sealed class LevelSelect
         Add(Header("Routes"));
         AddRoutes(_storage.LoadAll(), $"{world}/{name}", route =>
             new Entry(route.Name, false, true, () => _launch(new LaunchTarget(world, name, first, route)), leavesEditor: true,
-                note: route.Start == null ? "no start set" : null,
+                note: Notes(Best(route), route.Start == null ? "no start set" : null),
                 edit: EditAction(route, () => ShowLaunchZone(world, zone)), detail: route.Description));
 
         Add(Header("Without a route"));
@@ -430,7 +430,7 @@ internal sealed class LevelSelect
             }
 
             Add(new Entry(route.Name, false, true, () => Push(ShowRoutes, () => ShowRouteActions(route)),
-                note: Notes(_editor.IsShowing(route) ? "showing" : null, Summary(route)), edit: EditAction(route, ShowRoutes),
+                note: Notes(_editor.IsShowing(route) ? "climbing" : null, Summary(route)), edit: EditAction(route, ShowRoutes),
                 detail: route.Description));
         }
 
@@ -486,7 +486,35 @@ internal sealed class LevelSelect
             route.Description, MaxDescriptionLength, text => SetDescription(route, text))),
             note: route.Description == null ? "none" : null, detail: route.Description));
         Add(new Entry("Duplicate", false, true, () => Duplicate(route)));
+        if (_storage.Bests.Get(route.Id) is { } best)
+        {
+            Add(new Entry("Reset personal best", false, true, () => Push(page, () => ShowConfirmResetBest(route, best)),
+                note: Attempt.FormatTime(best)));
+        }
+
         Add(new Entry("Delete", false, true, () => Push(page, () => ShowConfirmDelete(route))));
+        End();
+    }
+
+    private void ShowConfirmResetBest(Route route, double best)
+    {
+        Begin("Reset personal best?", $"{route.Name} · {ZoneNames.PrettyKey(route.ZoneKey)}",
+            $"Your best time of {Attempt.FormatTime(best)} is forgotten. The next finish that stays on route sets a new one.");
+        Add(new Entry("No, keep it", false, true, Back));
+        Add(new Entry("Yes, reset it", false, true, () =>
+        {
+            try
+            {
+                _storage.Bests.Clear(route.Id);
+                _report?.Invoke($"Reset the personal best on {route.Name}.");
+            }
+            catch (Exception e)
+            {
+                _report?.Invoke($"Couldn't reset the personal best: {e.Message}");
+            }
+
+            Back();
+        }));
         End();
     }
 
@@ -610,7 +638,7 @@ internal sealed class LevelSelect
         }
     }
 
-    /// <summary>"You're in Well, Kami · showing Route 2".</summary>
+    /// <summary>"You're in Well, Kami · climbing Route 2".</summary>
     private static string Where(string here, Route shown)
     {
         if (here == null)
@@ -618,9 +646,9 @@ internal sealed class LevelSelect
             return null;
         }
 
-        var route = shown == null ? "no route showing"
-            : shown.ZoneKey == here ? $"showing {shown.Name}"
-            : $"showing {shown.Name} from {ZoneNames.PrettyKey(shown.ZoneKey)}";
+        var route = shown == null ? "no route"
+            : shown.ZoneKey == here ? $"climbing {shown.Name}"
+            : $"climbing {shown.Name} from {ZoneNames.PrettyKey(shown.ZoneKey)}";
         return $"You're in {Place(here)} · {route}";
     }
 
@@ -708,10 +736,11 @@ internal sealed class LevelSelect
         }
     }
 
-    private static string Summary(Route route)
+    private string Summary(Route route)
     {
         var strokes = route.Strokes.Count;
-        return $"{strokes} stroke{(strokes == 1 ? "" : "s")} · {(route.Start == null ? "no start" : "start set")}"
+        return (Best(route) is { } best ? $"{best} · " : "")
+            + $"{strokes} stroke{(strokes == 1 ? "" : "s")} · {(route.Start == null ? "no start" : "start set")}"
             + $" · {(route.Finish == null ? "no finish" : "finish set")}"
             + LineSummary(route);
     }
@@ -727,6 +756,9 @@ internal sealed class LevelSelect
             _ => $" · {lines.Count} lines",
         };
     }
+
+    /// <summary>"PB 1:23.45", or null if the route hasn't been finished on-route yet.</summary>
+    private string Best(Route route) => _storage.Bests.Get(route.Id) is { } best ? $"PB {Attempt.FormatTime(best)}" : null;
 
     private static int CountIn(List<Route> routes, string zoneKey) => routes.FindAll(route => route.ZoneKey == zoneKey).Count;
 

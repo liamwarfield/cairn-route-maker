@@ -5,10 +5,10 @@ namespace CairnRouteMaker.Routes;
 
 public enum AttemptState
 {
-    /// <summary>Ava isn't at the start of the route.</summary>
+    /// <summary>Not timing: she's on the rock, or on her feet at the finish, outside an attempt.</summary>
     Idle,
 
-    /// <summary>On her feet at the start marker; the clock starts when she starts climbing.</summary>
+    /// <summary>On her feet; the clock starts when she starts climbing.</summary>
     Ready,
 
     /// <summary>The clock is running.</summary>
@@ -19,21 +19,35 @@ public enum AttemptState
 }
 
 /// <summary>
-/// One timed go at a route. Standing at the start arms it, leaving the ground starts the clock,
-/// and reaching the finish stops it. Attaching a hand or foot anywhere that isn't on-route marks
-/// the attempt as off-route, but the clock keeps going so the climb can still be finished.
-/// Coming back down to the start resets it for another go.
+/// One timed go at a route. Leaving the ground to climb starts the clock, wherever she is, so a
+/// route can have several lines with their own starts. Reaching the finish stops it. Standing on
+/// a ledge partway up doesn't. Attaching a hand or foot anywhere that isn't on-route marks the
+/// attempt as off-route, but the clock keeps going so the climb can still be finished. Stepping
+/// back down where the attempt left the ground resets it for another go, and so does climbing
+/// from the ground again after a finish.
 /// </summary>
 public sealed class Attempt
 {
-    /// <summary>How close to the start marker Ava has to stand for an attempt to arm.</summary>
-    public const float StartRadius = 1.5f;
+    /// <summary>Back on her feet this close to where she started climbing, she's starting over.</summary>
+    public const float RestartRadius = 1.5f;
 
-    /// <summary>Walking this far from the start without climbing disarms the attempt.</summary>
-    public const float LeaveRadius = 5f;
+    /// <summary>
+    /// Climbing from the ground this close to the finish sphere doesn't start the clock, or stepping
+    /// off at the top and climbing back in would be a run of a second or two.
+    /// </summary>
+    public const float FinishMargin = 2f;
 
     private double _startedAt;
     private double _endedAt;
+
+    /// <summary>Where she left the ground for this attempt.</summary>
+    private Vector3 _climbedFrom;
+
+    /// <summary>Last frame she was on her feet away from the finish, so climbing now is a start.</summary>
+    private bool _wasOnGround;
+
+    /// <summary>Where she last stood away from the finish.</summary>
+    private Vector3 _lastOnGround;
 
     public AttemptState State { get; private set; }
 
@@ -52,6 +66,7 @@ public sealed class Attempt
     {
         State = AttemptState.Idle;
         OffRoute = false;
+        _wasOnGround = false;
     }
 
     /// <summary>
@@ -62,38 +77,37 @@ public sealed class Attempt
     public bool Update(Route route, double now, Vector3 position, Vector3 top, bool climbing)
     {
         var previous = State;
-        if (route.Start == null)
+        var startsClimbing = climbing && _wasOnGround;
+        var leftFrom = _lastOnGround;
+        _wasOnGround = !climbing && !(route.Finish?.Contains(position, top, FinishMargin) ?? false);
+        if (_wasOnGround)
         {
-            Reset();
-            return State != previous;
+            _lastOnGround = position;
         }
-
-        var startDistance = Vector3.Distance(position, route.Start.Position);
-        if (!climbing && startDistance <= StartRadius)
+        if (State == AttemptState.Climbing)
         {
-            // Standing at the start always means a fresh go, including stepping off mid-climb.
-            if (State != AttemptState.Ready)
+            if (route.Finish != null && route.Finish.Contains(position, top))
             {
-                Reset();
+                State = AttemptState.Finished;
+                _endedAt = now;
+            }
+            else if (!climbing && Vector3.Distance(position, _climbedFrom) <= RestartRadius)
+            {
+                OffRoute = false;
                 State = AttemptState.Ready;
             }
         }
-        else if (State == AttemptState.Ready)
+        else if (startsClimbing)
         {
-            if (climbing)
-            {
-                State = AttemptState.Climbing;
-                _startedAt = now;
-            }
-            else if (startDistance > LeaveRadius)
-            {
-                Reset();
-            }
+            OffRoute = false;
+            State = AttemptState.Climbing;
+            _startedAt = now;
+            _climbedFrom = leftFrom;
         }
-        else if (State == AttemptState.Climbing && route.Finish != null && route.Finish.Contains(position, top))
+        else if (State != AttemptState.Finished)
         {
-            State = AttemptState.Finished;
-            _endedAt = now;
+            // A finished time stays up until the next attempt starts.
+            State = _wasOnGround ? AttemptState.Ready : AttemptState.Idle;
         }
 
         return State != previous;
