@@ -6,7 +6,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>CairnRouteMaker</AssemblyName>
     <RootNamespace>CairnRouteMaker</RootNamespace>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <!-- net6.0 is what MelonLoader's IL2CPP runtime hosts; silence the SDK's EOL warning. -->
     <CheckEolTargetFramework>false</CheckEolTargetFramework>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
