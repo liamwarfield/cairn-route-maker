@@ -295,12 +295,32 @@ Read by disassembly (`GameAssembly.dll`; RVAs from the Cpp2IL stubs). The mod's 
   - It answers made-up loc keys in a `LocalizationManager.Get` prefix.
   - It saves its rebinds to `UserData/CairnRouteMaker/Controls.json` from a `RebindSheet.OnRebind` postfix.
 
+## Settings menu
+
+Read by disassembly and a hierarchy dump at runtime. The mod's Routes tab is confirmed in game, on the title screen and in the pause menu, and its page has been opened and closed from it without errors.
+
+- **Layout:** `TheGameBakers.Cairn.UI.SettingsMenu` is at `MainMenu/Canvas/SETTINGS/SettingsMenu` on the title screen; the pause menu has its own. Its root has a `CanvasGroup` covering the whole screen: header, page buttons, rows and the Reset / Back prompts.
+  - Under `Main/SettingsPageButtons` (a `VerticalLayoutGroup` with `BouncingArrowZone` and `BouncingButtons`) are the page buttons Gameplay, Controls, Language, Video and Audio.
+  - Each button is a `ButtonWithMoreEvents` with explicit navigation (Audio's Down is empty), a `SettingsPageButton`, an `Image` (the highlight while its page is open) and an `Animator`.
+  - The label is a child `TextMeshProUGUI` translated by a `TGBTools.UI.LocalizationUI`.
+- **Page buttons:** `SettingsPageButton.Awake` sets `settingsPage.settingsMenuButton` to itself and hooks the button's click to `SettingsMenu.OpenSettingsPage(this)`. **xref**
+- **Back and Reset:** these are input actions, not UI events. `SettingsMenu.ToggleActions(bool)` hooks or unhooks `BaseUIActions.Cancel` (`OnCancel`, which runs `Return`) and `Special` (`OnSpecial`, Reset). `OnOpened` turns them on and `OnClosing` turns them off. **xref**; with no page open, `Return` makes a virtual call that presumably closes Settings (**guess**).
+- **Selection effects:**
+  - `BouncingArrowZone.Awake` lists the `Selectable`s under it in `childs`, for the bouncing arrow.
+  - `BouncingButtons.ButtonsData` is built the first time it's asked for. It maps each `ButtonWithMoreEvents` under it to a `ButtonData(label)` and hooks `OnPointerEntered` to `SelectOnPointerEnter`. `Toggle(interactable)` turns all of them on or off.
+  - `SettingsMenu.Awake` calls `Toggle(false)`, which builds that list, and can run before the child `BouncingArrowZone.Awake`. **xref**; the order is confirmed in game.
+- **What the mod does** (`Game/SettingsMenuPatches.cs`, `Editor/PaintColorsMenu.cs`):
+  - In a `BouncingArrowZone.Awake` prefix it copies the Audio button below it, removes the copy's `LocalizationUI` and links it into the explicit navigation.
+  - The copy's `Awake` points Audio's page at the copy, so the mod points it back.
+  - It replaces the copy's click, so the copy never opens a settings page.
+  - If `BouncingButtons.buttonsData` already exists, the mod adds the copy to it. Otherwise the copy, made from a button that's off, would never be turned on.
+  - The copy's click opens the mod's Routes page. While it's open, the root `CanvasGroup`'s alpha is 0, `ToggleActions(false)` stops Back and Reset, and `GameApi.BlockMenuInput` stops the rest.
+
 ## Video settings page
 
-Read from the interop assemblies; the mod's row is confirmed in game, on the title screen and in the pause menu.
+Read from the interop assemblies, and confirmed in game with a route paint distance row the mod used to add here. That setting is on the mod's Routes page now (see [Settings menu](#settings-menu)).
 
 - **Rows are fields built in code.** `VideoSettingsPage` keeps its rows as TGBTools.UI fields: `FieldListArrows` for the quality rows (`QualityField`, `EnviroQualityField`, `LightQualityField`, `RockQualityField`), plus `FieldToggle` and `FieldSlider`. The menu's shared `FieldsUI.Add(Field)` makes a row for a field from the template for its type and appends it.
 - **`FieldListArrows(FieldLabel label, FieldLabel[] values, int index, OnValueChangedDelegate onValueChanged, int? defaultIndex)`.** A `FieldLabel` is a loc key or a plain string. Left and right wrap around at the ends. The Settings Reset prompt (R on keyboard) sets the field to `defaultIndex` and calls `onValueChanged`, with no confirmation.
 - **Description line:** the text under the rows comes from the page's `infos` (`SettingsPage.Info`: `field`, `fieldUI`, `fieldLocKey`, `infoLocKey`). A field that isn't in it shows a blank description.
 - **Back:** Escape doesn't leave a settings page; the on-screen Back control does.
-- **What the mod does** (`Game/VideoSettingsPatches.cs`): a `VideoSettingsPage.OnOpened` postfix adds a "Route paint distance" `FieldListArrows` after the page's own rows, unless one with that label is already there. It's added again each time the page opens, once each time. **guess** that `OnOpened` is where the page adds its own rows; ours always lands after them.

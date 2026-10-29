@@ -15,7 +15,8 @@ namespace CairnRouteMaker.Editor;
 /// without is travelled to straight away.
 /// "Manage saved routes" lists every route with travel and delete actions. On the title screen it's
 /// the free-climb launcher instead: a mountain, a zone, then one of its routes or a spawn point to
-/// start from without one. Both end with the settings: the paint colours (see <see cref="PaintColors"/>).
+/// start from without one. The route settings (see <see cref="PaintColors"/>) have pages of their own,
+/// opened from the Routes tab of the game's Settings (see <see cref="PaintColorsMenu"/>).
 /// Wherever a route is listed, the Edit route button (Y / E by default) opens its Edit Route page.
 /// Pages are rebuilt each time they show.
 /// </summary>
@@ -132,6 +133,14 @@ internal sealed class LevelSelect
         _report = report;
         _back.Clear();
         ShowLaunch();
+        IsOpen = true;
+    }
+
+    /// <summary>Open on the Routes page; backing out of it closes the menu.</summary>
+    public void OpenPaintColors()
+    {
+        _back.Clear();
+        ShowPaintColors();
         IsOpen = true;
     }
 
@@ -255,7 +264,6 @@ internal sealed class LevelSelect
                 note: world.IsCurrent ? "you are here" : RouteCount(count)));
         }
 
-        AddSettings(ShowLevels);
         End();
     }
 
@@ -334,7 +342,6 @@ internal sealed class LevelSelect
             Add(new Entry(Mountain(id), false, zones.Count > 0, () => Push(ShowLaunch, () => ShowLaunchZones(id)), note: RouteCount(count)));
         }
 
-        AddSettings(ShowLaunch);
         End();
     }
 
@@ -623,17 +630,9 @@ internal sealed class LevelSelect
 
     private static string Mountain(StreamingTweakables.World world) => ZoneNames.PrettyWorld(world.ToString());
 
-    /// <summary>The settings section that ends the first page; <paramref name="page"/> is that page, to come back to.</summary>
-    private void AddSettings(Action page)
-    {
-        Add(new Entry("Settings", true, false, null));
-        Add(new Entry("Paint colours", false, true, () => Push(page, ShowPaintColors),
-            swatches: new[] { PaintColors.Allow, PaintColors.Deny }));
-    }
-
     private void ShowPaintColors()
     {
-        Begin("Paint Colours", "Settings", "Pick from the lists, or set any #RRGGBB in UserData/MelonPreferences.cfg.");
+        Begin("Routes", "Settings", "Pick from the lists, or set any #RRGGBB in UserData/MelonPreferences.cfg.");
         foreach (var mode in new[] { StrokeMode.Allow, StrokeMode.Deny })
         {
             var color = PaintColors.Of(mode);
@@ -665,7 +664,7 @@ internal sealed class LevelSelect
         End();
     }
 
-    /// <summary>Make a change from the Paint Colours page, then show it again on the same entry.</summary>
+    /// <summary>Make a change from the Routes page, then show it again on the same entry.</summary>
     private void ChangePaint(Action change)
     {
         var index = Selected;
@@ -677,7 +676,7 @@ internal sealed class LevelSelect
     private void ShowPaintChoices(StrokeMode mode)
     {
         var allow = mode == StrokeMode.Allow;
-        Begin(allow ? "Allow Paint" : "Deny Paint", "Settings · Paint Colours", allow ? "Paint for holds Ava may use." : "Paint for holds that are off-route.");
+        Begin(allow ? "Allow Paint" : "Deny Paint", "Settings · Routes", allow ? "Paint for holds Ava may use." : "Paint for holds that are off-route.");
         var current = PaintColors.Of(mode);
         var other = PaintColors.Of(allow ? StrokeMode.Deny : StrokeMode.Allow);
         var currentIndex = -1;

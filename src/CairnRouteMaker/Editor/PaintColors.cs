@@ -19,10 +19,10 @@ internal enum PaintStyle
 /// next-grab indicator follow too, whether it's drawn as a fill, a glow along its edges or both,
 /// and whether the glow pulses; also whether route lines show (each line has its own colour, see
 /// <see cref="LineColors"/>), and how far from Ava (or the editor camera) the paint shows. Set on the
-/// menu's Paint Colours page and saved in UserData/MelonPreferences.cfg, the colours as #RRGGBB,
-/// so any other colour can be typed in while the game is closed. The default yellow and red are hard to tell
-/// apart with red-green colour blindness; the blue and orange preset stays distinct under
-/// simulated protanopia, deuteranopia and tritanopia.
+/// Routes page (the Routes tab of the game's Settings) and saved in UserData/MelonPreferences.cfg,
+/// the colours as #RRGGBB, so any other colour can be typed in while the game is closed. The
+/// default yellow and red are hard to tell apart with red-green colour blindness; the blue and
+/// orange preset stays distinct under simulated protanopia, deuteranopia and tritanopia.
 /// </summary>
 internal static class PaintColors
 {
@@ -83,15 +83,13 @@ internal static class PaintColors
     private const float DefaultPaintDistance = 15f;
 
     /// <summary>
-    /// The levels <see cref="PaintDistance"/> is offered at, on the game's Video settings page and in
-    /// the mod's menu, lowest first: a name, and the distance in metres (0 for all of the paint).
+    /// The levels <see cref="PaintDistance"/> is offered at on the Routes page, lowest first: a
+    /// name, and the distance in metres (0 for all of the paint).
     /// </summary>
     public static readonly (string Name, float Metres)[] PaintDistanceLevels =
     {
-        ("Low", 10f), ("Medium", DefaultPaintDistance), ("High", 25f), ("Max", 0f),
+        ("Extra low", 10f), ("Low", DefaultPaintDistance), ("Medium", 25f), ("High", 40f), ("Max", 0f),
     };
-
-    public static int DefaultPaintDistanceLevel => LevelOf(DefaultPaintDistance);
 
     public static Color32 Allow { get; private set; } = Yellow.Color;
     public static Color32 Deny { get; private set; } = Red.Color;
@@ -235,7 +233,7 @@ internal static class PaintColors
         return metres > 0f ? best : Array.FindIndex(PaintDistanceLevels, l => l.Metres == 0f);
     }
 
-    /// <summary>"Medium (15 m)", "Max (all paint)", or just "20 m" for a distance that isn't a level's.</summary>
+    /// <summary>"Low (15 m)", "Max (all paint)", or just "20 m" for a distance that isn't a level's.</summary>
     public static string DescribePaintDistance(float metres)
     {
         var distance = metres > 0f ? $"{metres:0.#} m" : "all paint";
