@@ -104,6 +104,17 @@ internal sealed class RouteOverlay
         _paint.ReportWhenDrawn();
     }
 
+    /// <summary>
+    /// Show only the paint near this point (see <see cref="PaintColors.PaintDistance"/>), or all of it
+    /// for null; call every frame.
+    /// </summary>
+    public void ShowPaintAround(Vector3? focus) => _paint.ShowAround(focus is { } point ? ToNumerics(point) : null);
+
+    /// <summary>How many 2 m cubes have paint, and how many of them are drawn.</summary>
+    public (int Cubes, int Shown, int Faded) PaintCounts => _paint.Counts;
+
+    public double TakeSlowestPaintFadeMs() => _paint.TakeSlowestFadeMs();
+
     /// <summary>Do this frame's share of queued paint drawing and pulse the glow; call every frame.</summary>
     public void Flush()
     {
@@ -308,6 +319,7 @@ internal sealed class RouteOverlay
         _paint.SetColors(PaintColors.Allow, PaintColors.Deny);
         _paint.SetStyle(PaintColors.ShowsFill, PaintColors.ShowsGlow);
         _paint.GlowPulse = PaintColors.GlowPulse;
+        _paint.ShowRadius = PaintColors.PaintDistance > 0f ? PaintColors.PaintDistance : float.PositiveInfinity;
         _brushMaterials[(int)StrokeMode.Allow].color = WithAlpha(PaintColors.Allow, BrushAllowAlpha);
         _brushMaterials[(int)StrokeMode.Deny].color = WithAlpha(PaintColors.Deny, BrushDenyAlpha);
         ApplyLineVisibility();

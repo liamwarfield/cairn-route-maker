@@ -28,6 +28,9 @@ namespace CairnRouteMaker.Editor;
 /// down along its axis to the depth its dabs span. Otherwise a stroke along a wall would also
 /// colour the ledges above and below it, wherever the up/down decals' columns cross them.
 ///
+/// Every decal is a draw of its own, so a heavily painted route can slow the game down. Only cubes
+/// near a focus (Ava, or the camera in the route editor) are left switched on: see <see cref="ShowAround"/>.
+///
 /// Texture work is queued and done a few milliseconds per frame, so loading a big route never
 /// stalls the game. The texel loops use System.Numerics and MathF only: under IL2CPP every
 /// UnityEngine.Vector3 or Mathf call crosses into native code, which made redraws take seconds.
@@ -93,6 +96,39 @@ internal sealed class DecalPaint
     /// </summary>
     private const int PulseGroups = 4;
 
+    /// <summary>
+    /// How much further than <see cref="ShowRadius"/> a cube that's showing stays shown, so cubes on
+    /// the edge don't flick on and off as Ava shifts about.
+    /// </summary>
+    private const float ShowSlack = 3f;
+
+    /// <summary>
+    /// How much of <see cref="ShowRadius"/>, at its outer end, the paint fades out over, so it
+    /// thins away rather than stopping at a hard edge, and cubes switch on unseen.
+    /// </summary>
+    private const float FadeShare = 0.4f;
+
+    /// <summary>Smallest change in a cube's opacity worth a call into the game.</summary>
+    private const float OpacityStep = 0.02f;
+
+    /// <summary>How far the focus moves before the cubes are checked again: small enough that the fade looks smooth.</summary>
+    private const float RecheckDistance = 0.25f;
+
+    /// <summary>How far the focus moves before a faded texture is faded again; see <see cref="RefreshFades"/>.</summary>
+    private const float FadeRefresh = 0.25f;
+
+    /// <summary>
+    /// How far the focus can get from where a cube's texture was faded before the texture is put
+    /// back as drawn, and the cube's own opacity takes over until it's faded anew.
+    /// </summary>
+    private const float FadeTrust = 1f;
+
+    /// <summary>Texture fading allowed per frame; cubes left over wait their turn.</summary>
+    private const double FadeBudgetMs = 1.0;
+
+    /// <summary>Furthest any point of a cube is from its centre.</summary>
+    private static readonly float CellReach = CellSize * MathF.Sqrt(3f) * 0.5f;
+
     private static readonly int MainTexAsEmissionId = Shader.PropertyToID("_MainTexAsEmission");
 
     /// <summary>What <see cref="Facings"/> gives for a cube with nothing solid in it.</summary>
@@ -152,6 +188,25 @@ internal sealed class DecalPaint
         public bool NeedsRedraw;
         public bool NeedsUpload;
         public bool Queued;
+
+        /// <summary>Whether <see cref="GameObject"/> is active, so its decals draw; see <see cref="ShowAround"/>.</summary>
+        public bool Shown;
+
+        /// <summary>The fill and glow decals' opacity multipliers; see <see cref="UpdateOpacity"/>.</summary>
+        public float FillOpacity = 1f;
+        public float GlowOpacity = 1f;
+
+        /// <summary>
+        /// The focus <see cref="Texture"/> was last faded around (see <see cref="FadeTexture"/>), or
+        /// null while it holds the paint as drawn.
+        /// </summary>
+        public NVector3? FadedFor;
+
+        /// <summary>The <see cref="ShowRadius"/> <see cref="FadedFor"/>'s fade was for.</summary>
+        public float FadedRadius;
+
+        /// <summary>Middle of the decal box, which <see cref="Place"/> moves along the axis to the paint.</summary>
+        public NVector3 BoxCenter;
     }
 
     private readonly Transform _parent;
@@ -194,6 +249,28 @@ internal sealed class DecalPaint
     private Material _glowBaseMaterial;
     private bool _fill = true;
     private bool _glow = true;
+
+    /// <summary>Where paint shows around (see <see cref="ShowAround"/>), or null for everywhere.</summary>
+    private NVector3? _focus;
+
+    /// <summary>The focus when the cubes were last checked against it.</summary>
+    private NVector3 _checkedFocus;
+    private float _showRadius = float.PositiveInfinity;
+
+    /// <summary>Set when a bulk load is queued, so its cubes are drawn nearest the focus first.</summary>
+    private bool _sortPending;
+
+    /// <summary>Whether some texture may need fading or restoring; see <see cref="RefreshFades"/>.</summary>
+    private bool _fadeWork;
+
+    /// <summary>Where in <see cref="_cells"/> the next frame's texture fading starts, so every cube gets its turn.</summary>
+    private int _fadeCursor;
+
+    /// <summary>A cube's paint with its fade applied, for upload (pinned, see NewPixels).</summary>
+    private readonly byte[] _fadePixels = NewPixels();
+
+    /// <summary>Slowest <see cref="RefreshFades"/> since <see cref="TakeSlowestFadeMs"/> last asked, in ms.</summary>
+    private double _slowestFadeMs;
 
     /// <summary>Whether the last <see cref="Animate"/> left the glow dimmed.</summary>
     private bool _dimmed;
@@ -294,12 +371,12 @@ internal sealed class DecalPaint
         var dim = pulsing ? PulseDepth * (0.5f - 0.5f * MathF.Cos(time * (2f * MathF.PI / PulsePeriod))) : 0f;
         var emission = GlowEmission * (1f - dim);
 
-        // While pulsing, each material only takes its turn (see PulseGroups); stopping resets them all.
+        // While pulsing, each shown material only takes its turn (see PulseGroups); stopping resets them all.
         _pulseGroup = (_pulseGroup + 1) % PulseGroups;
         var index = 0;
         foreach (var cell in _cells.Values)
         {
-            if (cell.GlowMaterial != null && (!pulsing || index % PulseGroups == _pulseGroup))
+            if (cell.GlowMaterial != null && (!pulsing || (cell.Shown && index % PulseGroups == _pulseGroup)))
             {
                 cell.GlowMaterial.SetFloat(MainTexAsEmissionId, emission);
             }
@@ -314,6 +391,293 @@ internal sealed class DecalPaint
     /// <summary>Called once queued drawing finishes, with a summary of the work for the log.</summary>
     public Action<string> DrawingFinished { get; set; }
 
+    /// <summary>How far from the focus paint shows, in metres; infinity for everywhere.</summary>
+    public float ShowRadius
+    {
+        get => _showRadius;
+        set
+        {
+            if (value != _showRadius)
+            {
+                _showRadius = value;
+                RecheckShown();
+            }
+        }
+    }
+
+    /// <summary>How many cubes have paint, how many of them are switched on, and how many of those have faded textures.</summary>
+    public (int Cubes, int Shown, int Faded) Counts
+    {
+        get
+        {
+            var shown = 0;
+            var faded = 0;
+            foreach (var cell in _cells.Values)
+            {
+                if (cell.Shown)
+                {
+                    shown++;
+                    if (cell.FadedFor != null)
+                    {
+                        faded++;
+                    }
+                }
+            }
+
+            return (_cells.Count, shown, faded);
+        }
+    }
+
+    /// <summary>
+    /// Show only the paint within <see cref="ShowRadius"/> of this point, or all of it for null; call
+    /// every frame. Cubes further away are switched off, so the game's decal system drops them
+    /// altogether, and the paint fades out towards the edge (see <see cref="FadeShare"/>). Cubes
+    /// are only checked again once the focus has moved <see cref="RecheckDistance"/>.
+    /// </summary>
+    public void ShowAround(NVector3? focus)
+    {
+        var moved = focus is { } point
+            ? _focus == null || NVector3.DistanceSquared(point, _checkedFocus) > RecheckDistance * RecheckDistance
+            : _focus != null;
+        _focus = focus;
+        if (moved)
+        {
+            RecheckShown();
+        }
+
+        RefreshFades();
+    }
+
+    /// <summary>Switch every cube on or off for the current focus and radius.</summary>
+    private void RecheckShown()
+    {
+        if (_focus is { } focus)
+        {
+            _checkedFocus = focus;
+        }
+
+        foreach (var cell in _cells.Values)
+        {
+            UpdateShown(cell);
+        }
+
+        _fadeWork = true;
+    }
+
+    private void UpdateShown(Cell cell)
+    {
+        if (cell.GameObject == null)
+        {
+            return;
+        }
+
+        var show = ShouldShow(cell);
+        if (show)
+        {
+            // Before switching on, so a cube coming into range never draws a frame at its old opacity.
+            UpdateOpacity(cell);
+        }
+
+        if (show != cell.Shown)
+        {
+            cell.Shown = show;
+            cell.GameObject.SetActive(show);
+            if (show)
+            {
+                Registrations++;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fade a cube as a whole, by its centre's distance (see <see cref="OpacityFor"/>). That steps
+    /// from cube to cube, so the fill's fade is done per texel instead once its texture has been
+    /// faded (see <see cref="FadeTexture"/>); the glow's thin edges keep the whole-cube fade.
+    /// </summary>
+    private void UpdateOpacity(Cell cell)
+    {
+        // A texture faded around somewhere else, or for another radius, could hide paint that should show.
+        if (cell.FadedFor is { } faded && (cell.FadedRadius != _showRadius || _focus is not { } focus
+            || NVector3.DistanceSquared(faded, focus) > FadeTrust * FadeTrust))
+        {
+            Load(cell.Texture, cell.Pixels);
+            cell.FadedFor = null;
+        }
+
+        var opacity = OpacityFor(cell);
+        SetOpacity(cell.Decal, ref cell.FillOpacity, cell.FadedFor != null ? 1f : opacity);
+        if (cell.GlowDecal != null)
+        {
+            SetOpacity(cell.GlowDecal, ref cell.GlowOpacity, opacity);
+        }
+    }
+
+    /// <summary>Not the material's _Opacity: the decal's property block sets its own, which wins.</summary>
+    private static void SetOpacity(TGBDecal decal, ref float current, float opacity)
+    {
+        if (opacity == current || (MathF.Abs(opacity - current) < OpacityStep && opacity is > 0f and < 1f))
+        {
+            return;
+        }
+
+        current = opacity;
+        decal.SetOpacityMultiplier(opacity);
+    }
+
+    /// <summary>
+    /// How opaque paint this far from the focus is: full near it, easing to nothing at
+    /// <see cref="ShowRadius"/> over its outer <see cref="FadeShare"/>.
+    /// </summary>
+    private float FadeAt(float distance)
+    {
+        var t = (_showRadius - distance) / (_showRadius * FadeShare);
+        return t >= 1f ? 1f : t <= 0f ? 0f : t * t * (3f - 2f * t);
+    }
+
+    private float OpacityFor(Cell cell) => _focus is { } focus && !float.IsPositiveInfinity(_showRadius)
+        ? FadeAt(NVector3.Distance(cell.Center, focus))
+        : 1f;
+
+    /// <summary>Whether some of a showing cube's paint is in the fade, so its texture should be faded.</summary>
+    private bool WantsFade(Cell cell)
+    {
+        if (!cell.Shown || _focus is not { } focus || float.IsPositiveInfinity(_showRadius))
+        {
+            return false;
+        }
+
+        var distance = NVector3.Distance(cell.Center, focus);
+        return distance - CellReach < _showRadius && distance + CellReach > _showRadius * (1f - FadeShare);
+    }
+
+    /// <summary>Whether a cube's texture needs fading again, or putting back as drawn.</summary>
+    private bool NeedsFade(Cell cell)
+    {
+        if (cell.Texture == null)
+        {
+            return false;
+        }
+
+        if (!WantsFade(cell))
+        {
+            return cell.FadedFor != null;
+        }
+
+        return cell.FadedFor is not { } faded || NVector3.DistanceSquared(faded, _focus.Value) > FadeRefresh * FadeRefresh;
+    }
+
+    /// <summary>
+    /// Fade the textures of cubes reaching into the fade, and put back those that have left it,
+    /// for up to <see cref="FadeBudgetMs"/> a frame, taking turns from where the last frame stopped.
+    /// </summary>
+    private void RefreshFades()
+    {
+        if (!_fadeWork)
+        {
+            return;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+        var budget = (long)(FadeBudgetMs * Stopwatch.Frequency / 1000.0);
+        var stoppedAt = -1;
+        for (var lap = 0; lap < 2 && stoppedAt < 0; lap++)
+        {
+            var index = 0;
+            foreach (var cell in _cells.Values)
+            {
+                var turn = lap == 0 ? index >= _fadeCursor : index < _fadeCursor;
+                index++;
+                if (!turn || !NeedsFade(cell))
+                {
+                    continue;
+                }
+
+                if (Stopwatch.GetTimestamp() - started > budget)
+                {
+                    stoppedAt = index - 1;
+                    break;
+                }
+
+                if (WantsFade(cell))
+                {
+                    FadeTexture(cell, _focus.Value);
+                }
+                else
+                {
+                    Load(cell.Texture, cell.Pixels);
+                    cell.FadedFor = null;
+                }
+
+                UpdateOpacity(cell);
+            }
+        }
+
+        _fadeWork = stoppedAt >= 0;
+        _fadeCursor = Math.Max(stoppedAt, 0);
+        _slowestFadeMs = Math.Max(_slowestFadeMs, MsSince(started));
+    }
+
+    /// <summary>The longest a frame's texture fading took since the last call, in ms, for the log.</summary>
+    public double TakeSlowestFadeMs()
+    {
+        var slowest = _slowestFadeMs;
+        _slowestFadeMs = 0;
+        return slowest;
+    }
+
+    /// <summary>
+    /// Upload a cube's paint with each texel's alpha faded by its own distance from the focus
+    /// (<see cref="FadeAt"/>), which runs smoothly across cubes where fading whole cubes steps.
+    /// A texel is taken to lie on the plane through the middle of the decal box.
+    /// </summary>
+    private void FadeTexture(Cell cell, NVector3 focus)
+    {
+        var pixels = cell.Pixels;
+        var faded = _fadePixels;
+        Buffer.BlockCopy(pixels, 0, faded, 0, pixels.Length);
+
+        // Squared distance to texel (x, y) on the plane: |w + x Right + y Up|^2, Right and Up being orthonormal.
+        var w = cell.BoxCenter - focus;
+        var rightW = 2f * NVector3.Dot(cell.Right, w);
+        var upW = 2f * NVector3.Dot(cell.Up, w);
+        var wSquared = w.LengthSquared();
+        for (var j = 0; j < Resolution; j++)
+        {
+            var y = (j + 0.5f) * TexelSize - CellSize * 0.5f;
+            var row = wSquared + y * (upW + y);
+            for (var i = 0; i < Resolution; i++)
+            {
+                var alpha = (j * Resolution + i) * 4 + 3;
+                if (pixels[alpha] == 0)
+                {
+                    continue;
+                }
+
+                var x = (i + 0.5f) * TexelSize - CellSize * 0.5f;
+                faded[alpha] = (byte)(pixels[alpha] * FadeAt(MathF.Sqrt(row + x * (rightW + x))));
+            }
+        }
+
+        Load(cell.Texture, faded);
+        cell.FadedFor = focus;
+        cell.FadedRadius = _showRadius;
+    }
+
+    /// <summary>
+    /// Whether any of a cube is near enough the focus to show, so it's on before its nearest paint
+    /// starts fading in; one already showing gets <see cref="ShowSlack"/> more.
+    /// </summary>
+    private bool ShouldShow(Cell cell)
+    {
+        if (_focus is not { } focus || float.IsPositiveInfinity(_showRadius))
+        {
+            return true;
+        }
+
+        var reach = _showRadius + CellReach + (cell.Shown ? ShowSlack : 0f);
+        return NVector3.DistanceSquared(cell.Center, focus) <= reach * reach;
+    }
+
     public void Clear()
     {
         foreach (var cell in _cells.Values)
@@ -325,6 +689,9 @@ internal sealed class DecalPaint
         _cubeFacings.Clear();
         _pending.Clear();
         _pendingStamps.Clear();
+        _sortPending = false;
+        _fadeWork = false;
+        _fadeCursor = 0;
         _drawTimer.Reset();
         _drawWorkMs = 0;
     }
@@ -336,6 +703,7 @@ internal sealed class DecalPaint
     public void AddLater(int strokeIndex, StrokeMode mode, Stamp stamp)
     {
         _pendingStamps.Enqueue((strokeIndex, mode, stamp));
+        _sortPending = true;
         StartDrawTimer();
     }
 
@@ -582,6 +950,7 @@ internal sealed class DecalPaint
 
         var (rotation, _, _) = Orientation(cell.Axis);
         var position = cell.Center + cell.Axis * ((min + max) * 0.5f - centerDepth);
+        cell.BoxCenter = position;
         var transform = cell.GameObject.transform;
         transform.SetPositionAndRotation(RouteOverlay.ToUnity(position), rotation);
         transform.localScale = new Vector3(CellSize, MathF.Max(max - min, MinDepthSpan), CellSize);
@@ -627,6 +996,12 @@ internal sealed class DecalPaint
             AddNow(strokeIndex, mode, stamp);
         }
 
+        if (_pendingStamps.Count == 0 && _sortPending)
+        {
+            _sortPending = false;
+            SortPendingByDistance();
+        }
+
         // Textures are only drawn once every stamp is in, so each cell is drawn once, not per stamp.
         while (_pendingStamps.Count == 0 && _pending.Count > 0 && _frameTimer.Elapsed.TotalMilliseconds < FlushBudgetMs)
         {
@@ -663,6 +1038,29 @@ internal sealed class DecalPaint
                     + $"creating decals {s.Create:0} ms; painting {s.Paint:0} ms; glow {s.Glow:0} ms; uploading {s.Upload:0} ms). "
                     + $"Glow pulse: {_animateMs:0.00} ms a frame.");
             }
+        }
+    }
+
+    /// <summary>Put the queued cubes nearest the focus first, so a route loads in around Ava.</summary>
+    private void SortPendingByDistance()
+    {
+        if (_focus is not { } focus || _pending.Count < 2)
+        {
+            return;
+        }
+
+        var cells = _pending.ToArray();
+        var distances = new float[cells.Length];
+        for (var i = 0; i < cells.Length; i++)
+        {
+            distances[i] = NVector3.DistanceSquared(cells[i].Center, focus);
+        }
+
+        Array.Sort(distances, cells);
+        _pending.Clear();
+        foreach (var cell in cells)
+        {
+            _pending.Enqueue(cell);
         }
     }
 
@@ -750,6 +1148,11 @@ internal sealed class DecalPaint
     {
         var started = Stopwatch.GetTimestamp();
         Load(cell.Texture, cell.Pixels);
+
+        // The texture is as drawn again: the cube's own opacity fades it until it's faded anew.
+        cell.FadedFor = null;
+        UpdateOpacity(cell);
+        _fadeWork = true;
         if (_glow && cell.GlowTexture != null)
         {
             _stats.Upload += MsSince(started);
@@ -1129,8 +1532,14 @@ internal sealed class DecalPaint
             cell.Glow.SetActive(_glow);
         }
 
-        cell.GameObject.SetActive(true);
-        Registrations++;
+        cell.Shown = ShouldShow(cell);
+        if (cell.Shown)
+        {
+            UpdateOpacity(cell);
+            cell.GameObject.SetActive(true);
+            Registrations++;
+        }
+
         return true;
     }
 

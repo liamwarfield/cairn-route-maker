@@ -13,11 +13,29 @@ namespace CairnRouteMaker.Game;
 /// </summary>
 internal static class Diagnostics
 {
+    /// <summary>The frame rate in the dump is averaged over about this many seconds.</summary>
+    private const float FrameWindow = 5f;
+
+    /// <summary>Recent frame lengths in seconds, a ring with the newest just before <see cref="_frameIndex"/>.</summary>
+    private static readonly float[] FrameTimes = new float[2048];
+    private static int _frameIndex;
+    private static int _frameCount;
+
+    /// <summary>Note this frame's length for the dump's frame rate; call every frame.</summary>
+    public static void SampleFrame()
+    {
+        FrameTimes[_frameIndex] = Time.unscaledDeltaTime;
+        _frameIndex = (_frameIndex + 1) % FrameTimes.Length;
+        _frameCount = Math.Min(_frameCount + 1, FrameTimes.Length);
+    }
+
     public static void Dump()
     {
         var log = new MelonLogger.Instance("RouteMaker.Diag");
         try
         {
+            // First, before the dump's own slow work.
+            DumpFrameRate(log);
             log.Msg($"Render pipeline: {(GraphicsSettings.currentRenderPipeline == null ? "built-in" : GraphicsSettings.currentRenderPipeline.name)}");
             var camera = Camera.main;
             if (camera != null)
@@ -36,10 +54,31 @@ internal static class Diagnostics
         }
     }
 
+    private static void DumpFrameRate(MelonLogger.Instance log)
+    {
+        var total = 0f;
+        var slowest = 0f;
+        var frames = 0;
+        while (frames < _frameCount && total < FrameWindow)
+        {
+            var seconds = FrameTimes[(_frameIndex - 1 - frames + FrameTimes.Length) % FrameTimes.Length];
+            total += seconds;
+            slowest = MathF.Max(slowest, seconds);
+            frames++;
+        }
+
+        if (frames > 0 && total > 0f)
+        {
+            log.Msg($"Frame rate over the last {total:0.0} s: {frames / total:0.0} fps ({total / frames * 1000f:0.0} ms a frame), slowest frame {slowest * 1000f:0.0} ms. "
+                + $"vSyncCount={QualitySettings.vSyncCount} targetFrameRate={Application.targetFrameRate}");
+        }
+    }
+
     private static void DumpDecals(MelonLogger.Instance log)
     {
         var decals = UnityEngine.Object.FindObjectsOfType<TGBDecal>(true);
         log.Msg($"TGBDecal instances: {decals.Length}");
+        log.Msg($"Decal system: {TGBDecalSystem.allDecalsCount} registered, {TGBDecalSystem.visibleDecalsCount} visible. Stats: {TGBDecalSystem.GetStatsMessage()}");
         var seen = new HashSet<string>();
         foreach (var decal in decals)
         {
