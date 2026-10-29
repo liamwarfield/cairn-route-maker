@@ -10,7 +10,8 @@ namespace CairnRouteMaker.Editor;
 /// <summary>
 /// Where a route ends. The finish sphere is a glassy bubble that's clear in the middle and lit at its
 /// rim, with a chequered ring painted on the rock where it meets it. A little cairn turns slowly
-/// inside, and a beam of light rises from the top so the finish can be seen from the climb below.
+/// inside. On a ledge or summit a beam of light rises from the top, so the finish can be seen from the
+/// climb below; a finish on a wall faces the climber already, and gets no beam.
 ///
 /// The bubble's rim light depends on the view, so it's worked out per vertex each frame (a fresnel
 /// term), as is the shading on the cairn's stones.
@@ -49,6 +50,13 @@ internal sealed class FinishMarker
     private const float BeaconGlow = 0.5f;
     private const float NearFadeStart = 1.5f;
     private const float NearFadeEnd = 4f;
+
+    /// <summary>
+    /// The beam fades out as the rock steepens, between these heights of its normal: gone on rock
+    /// Ava would climb (GameApi's MinGroundNormalY is 0.7), where it would run up the rock face.
+    /// </summary>
+    private const float BeaconSteepest = 0.6f;
+    private const float BeaconFullFlat = 0.8f;
 
     /// <summary>
     /// The cairn's stones from the bottom up, for a 1 m finish: the centre (x, height above the
@@ -193,13 +201,14 @@ internal sealed class FinishMarker
             _mesh.Set(_sphere.Length + i, point, GlowMesh.Paint(StoneColor * lit, (0.5f + 0.3f * rim) * breath, (0.1f + 0.4f * rim) * breath));
         }
 
-        // The beam rises from the top of the bubble's open side: the very top on the ground, but out
-        // from the rock on a wall, where the top is on the rock face and the beam would run up inside it.
+        // The beam rises from the top of the bubble's open side, which on sloping rock is out from
+        // the rock rather than on it.
         var rise = NVector3.UnitY + up;
         var beaconFoot = (rise.LengthSquared() > 0.25f ? NVector3.Normalize(rise) : NVector3.UnitY) * radius;
         var toAxis = eye - beaconFoot;
         toAxis.Y = 0f;
-        var beacon = breath * GlowMesh.Smoothstep(NearFadeStart, NearFadeEnd, toAxis.Length());
+        var beacon = breath * GlowMesh.Smoothstep(NearFadeStart, NearFadeEnd, toAxis.Length())
+            * GlowMesh.Smoothstep(BeaconSteepest, BeaconFullFlat, up.Y);
         _mesh.SetBeam(_beamFirst, beaconFoot, BeaconHeight, BeaconHalfWidth, eye, Color, BeaconTint * beacon, BeaconGlow * beacon);
         _mesh.EndFrame();
         _pad.SetBrightness(GlowMesh.Breath(time, 0.3f));
