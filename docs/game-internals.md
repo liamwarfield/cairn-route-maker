@@ -293,7 +293,7 @@ Read from the interop assemblies (`Il2CppTheGameBakers.Cairn.Global.dll`) and by
   - The running setup is `CairnSceneManager.Instance.GameSetup`.
 - **Save slots:** saves are kept per type, under `Saved Games/TheGameBakers/Cairn_RETAIL/SAVEGAMES/RETAIL/{STORY,SUMMIT,DEV}/SLOT_*.CPK` in the Proton prefix.
 - **Leaderboards:** `GameEventManager.Cheats()` raises `OnCheat`. That marks the run (`ClimbingStatistics.DeclareCheating`, `PathRecorder.IsCheating`), and scoreboard requests leave cheating records out by default (`ScoreboardRequest.includeCheatingRecords`).
-- **Taping fingers:** `TapingFingersManager.Activate` shows the hands model (`models`, each a `TapingFingersModel` with a `PawnManager.Character character`) that matches the running `GameSetup.character`, and makes it `CurrentModel`. `TapingFingersInit` then throws if none matched. A `GameSetup` built from a spawner alone has `character = Invalid`, so the mod sets `Aava` when it launches free climb. **xref**
+- **Taping fingers:** `TapingFingersManager.Activate` shows the hands model (`models`, each a `TapingFingersModel` with a `PawnManager.Character character`) that matches the running `GameSetup.character`, and makes it `CurrentModel`. `TapingFingersInit` then throws if none matched. A `GameSetup` built from a spawner alone has `character = Invalid`, so the mod sets `Aava` when it launches free climb. **xref**; the fix is confirmed in game.
 - **Free climb (this mod):**
   - The mod fills in `SummitMenu` with a `GameSetup(spawner)` that has `summitMode = true`, `character = Aava` and `NoStory | NoTutorials | NoPhysiologicalNeeds | CanWarp | MeaninglessDeath`, then calls `TransitionToStep(LaunchNewSummitGame)`.
   - A game is free climb only while the running setup has exactly those rules.
