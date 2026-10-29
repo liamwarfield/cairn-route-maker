@@ -64,6 +64,19 @@ Key names are X keysyms. Coordinates are in the 1920x1080 screen, so halve what 
 - Mouse clicks work but hovering doesn't move the menu highlight. Be careful clicking near the bottom of the title menu, because Quit is there and exits the game.
 - Screenshot before and after each input, and give the game a second or two to react. Loading into a mountain takes longer, so watch the log or keep screenshotting.
 
+## Handing a test to a tester
+
+In-game tests go to a GPT Sol tester, not Astra: Astra uses up too much of the user's limits.
+
+- In T3, call `orchestrator_capabilities`, pick the latest Codex Sol model (`gpt-6.1-sol` as of 2026-10-28), and name it in `delegate_task`'s target. Codex's own default model is `gpt-6-astra`, so a Codex child started without a model runs on Astra.
+- If no Sol model is offered, say so. Don't fall back to Astra or another model.
+- Run one tester at a time. There is one game install, one `Mods` folder and one fake screen.
+- The tester has none of your context or memories, so the brief must say:
+  - what build to test (branch or commit) and what to check
+  - to drive the game with this skill and `stop` when done
+  - to back up `Mods/CairnRouteMaker.dll` and `UserData/CairnRouteMaker/Routes` to `UserData/CairnRouteMaker-backups/` before deploying, and restore both afterwards
+  - never to press Return on "Story" in the title menu. It loads the user's story save, and the pause menu's "Quick save and quit" overwrites it. If a story game does load, leave with "Quit without saving".
+
 ## Rules
 
 - Only one copy of the game can run per Proton prefix. `game` refuses to start if Cairn is already running anywhere. If the user has it open on their desktop, ask before quitting it, and never kill a copy you didn't start.
