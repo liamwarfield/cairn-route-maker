@@ -236,7 +236,7 @@ internal sealed class FinishMarker
         // the rock rather than on it.
         var rise = NVector3.UnitY + _rock.Normal;
         _beaconFoot = (rise.LengthSquared() > 0.25f ? NVector3.Normalize(rise) : NVector3.UnitY) * _finish.Radius;
-        _beaconHeight = BeaconRoom(_finish.Position + _beaconFoot);
+        _beaconHeight = BeaconRoom(_finish.Position, _rock.Normal, _finish.Position + _beaconFoot);
     }
 
     /// <summary>
@@ -244,9 +244,19 @@ internal sealed class FinishMarker
     /// of it, so a beam through a roof would carry on above the cliff, where it looks like the finish
     /// is up there. 0 if the roof is too close for a beam at all.
     /// </summary>
-    private static float BeaconRoom(NVector3 foot)
+    private static float BeaconRoom(NVector3 point, NVector3 normal, NVector3 foot)
     {
-        if (!Physics.Raycast(RouteOverlay.ToUnity(foot), Vector3.up, out var hit, BeaconHeight, GameApi.SurfaceMask, QueryTriggerInteraction.Ignore))
+        // First from just off the rock out to the foot: a roof lower than the bubble holds the foot
+        // inside it, and a ray that starts inside rock doesn't hit it.
+        var from = point + normal * 0.05f;
+        var toFoot = foot - from;
+        var mask = GameApi.SurfaceMask;
+        if (Physics.Raycast(RouteOverlay.ToUnity(from), RouteOverlay.ToUnity(NVector3.Normalize(toFoot)), toFoot.Length(), mask, QueryTriggerInteraction.Ignore))
+        {
+            return 0f;
+        }
+
+        if (!Physics.Raycast(RouteOverlay.ToUnity(foot), Vector3.up, out var hit, BeaconHeight, mask, QueryTriggerInteraction.Ignore))
         {
             return BeaconHeight;
         }
