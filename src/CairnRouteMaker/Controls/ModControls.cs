@@ -135,6 +135,10 @@ internal static class ModControls
         "Next line colour", "<Keyboard>/c", "<Gamepad>/dpad/up", "Next line colour (hold: new line)");
     public static readonly Control NewLine = new("NewLine", ControlSection.RouteEditor, ControlModes.RouteEditor, "New route line", "<Keyboard>/n", null);
 
+    // L3 is also half of L3+R3, so on a gamepad it only counts when let go without R3 pressed.
+    public static readonly Control Rappel = new("Rappel", ControlSection.RouteEditor, ControlModes.RouteEditor,
+        "Rappel / climb (dotted line piece)", "<Keyboard>/r", "<Gamepad>/leftStickPress");
+
     // Ctrl+key on the keyboard. The remap screen only rebinds the key, so these are left out of its
     // clash checks: S would always clash with Move back.
     public static readonly Control Undo = new("Undo", ControlSection.RouteEditor, ControlModes.None, "Undo (with Ctrl)", "<Keyboard>/z", "<Gamepad>/select", "Undo");
@@ -151,7 +155,7 @@ internal static class ModControls
         MoveForward, MoveBack, MoveLeft, MoveRight, MoveDown, MoveUp, Fast, Medium, Look,
         Teleport, PlayTest, LevelSelect, Exit, ToggleFreecam,
         OpenEditor, GoToStart, ShowRoute, Paint, CycleBrush, AllowBrush, DenyBrush, EraseBrush,
-        LineTool, BrushBigger, BrushSmaller, SetStart, SetFinish, ShowLine, DeletePoint, LineColor, NewLine, Undo, Save,
+        LineTool, BrushBigger, BrushSmaller, SetStart, SetFinish, ShowLine, DeletePoint, LineColor, NewLine, Rappel, Undo, Save,
         EditRoute,
     };
 
