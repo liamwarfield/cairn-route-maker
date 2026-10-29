@@ -364,7 +364,9 @@ internal static class GameApi
             return false;
         }
 
-        var setup = new GameSetup(spawner) { summitMode = true, constraints = FreeClimbConstraints };
+        // The character picks the hands the bivouac's taping screen shows; with none set it finds
+        // no hands and throws, so taping fingers broke the game.
+        var setup = new GameSetup(spawner) { summitMode = true, constraints = FreeClimbConstraints, character = PawnManager.Character.Aava };
         setup.spawner = SpawnerObjectName(data, zone, spawner.name);
         summit.SelectedWorld = data;
         summit.SelectedZone = zone;
