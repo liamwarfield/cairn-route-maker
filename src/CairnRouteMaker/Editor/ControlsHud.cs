@@ -282,16 +282,16 @@ internal static class ControlsHud
                 groups.Add(gamepad
                     ? new[]
                     {
-                        H("Add a point, or drag a point or the line", P(ModControls.Paint)),
-                        H("Rappel", P(ModControls.Rappel)),
+                        H("Draw", P(ModControls.Paint)),
+                        H("Line type", P(ModControls.Rappel)),
                         H("Line colour (hold: new line)", P(ModControls.LineColor)),
                         H("Delete point (hold: delete line)", P(ModControls.DeletePoint)),
                         H("Next tool", P(ModControls.CycleBrush)),
                     }
                     : new[]
                     {
-                        H("Add a point, or drag a point or the line", P(ModControls.Paint)),
-                        H("Rappel", P(ModControls.Rappel)),
+                        H("Draw", P(ModControls.Paint)),
+                        H("Line type", P(ModControls.Rappel)),
                         H("New line", P(ModControls.NewLine)),
                         H("Line colour", P(ModControls.LineColor)),
                         H("Delete point / line", P(ModControls.DeletePoint), Or, Ctrl, Plus, P(ModControls.DeletePoint)),
@@ -306,14 +306,14 @@ internal static class ControlsHud
             groups.Add(gamepad
                 ? new[]
                 {
-                    H("Set start (facing the camera's way)", P(ModControls.SetStart)),
+                    H("Set start", P(ModControls.SetStart)),
                     H("Set finish (brush size)", P(ModControls.SetFinish)),
                     H("Undo", P(ModControls.Undo)),
                     H("Save", P(ModControls.Save)),
                 }
                 : new[]
                 {
-                    H("Set start (facing the camera's way)", P(ModControls.SetStart)),
+                    H("Set start", P(ModControls.SetStart)),
                     H("Set finish (brush size, at least 1 m)", P(ModControls.SetFinish)),
                     H("Show / hide route lines", P(ModControls.ShowLine)),
                     H("Undo", Ctrl, Plus, P(ModControls.Undo)),
