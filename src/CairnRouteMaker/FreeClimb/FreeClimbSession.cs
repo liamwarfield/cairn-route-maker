@@ -2,6 +2,7 @@ using System;
 using CairnRouteMaker.Editor;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
+using Il2Cpp;
 using MelonLoader;
 using UnityEngine;
 
@@ -21,18 +22,26 @@ internal sealed class FreeClimbSession
     /// <summary>A launch that hasn't produced Ava after this long gets its world state logged.</summary>
     private const float SlowLaunchSeconds = 20f;
 
+    /// <summary>How often a running free climb renews its claim on its mountain's summit save.</summary>
+    private const float ClaimSeconds = 60f;
+
     private readonly Traveler _traveler;
     private Route _pendingRoute;
     private bool _launched;
     private float _launchedAt;
     private bool _reportedSlowLaunch;
     private float _nextCheck;
+    private StreamingTweakables.World? _launchedWorld;
+    /// <summary>The mountain whose summit slot this session saves to: the one it started on, even after a trip.</summary>
+    private StreamingTweakables.World? _saveWorld;
+    private float _nextClaim;
 
     public FreeClimbSession(Traveler traveler)
     {
         _traveler = traveler;
         MainMenuPatches.MainMenuShown += End;
         IceGearPatches.KeepIceGear = () => IsActive;
+        ClimbingModePatches.InFreeClimb = () => IsActive;
     }
 
     public bool IsActive { get; private set; }
@@ -43,12 +52,13 @@ internal sealed class FreeClimbSession
     public event Action Ended;
 
     /// <summary>A game was launched from the menu; with a route, take Ava to its start once she's in.</summary>
-    public void OnLaunched(Route route)
+    public void OnLaunched(Route route, StreamingTweakables.World world)
     {
         _launched = true;
         _launchedAt = Time.unscaledTime;
         _reportedSlowLaunch = false;
         _pendingRoute = route;
+        _launchedWorld = world;
     }
 
     public void Update()
@@ -64,6 +74,14 @@ internal sealed class FreeClimbSession
             if (!GameApi.IsFreeClimbGame)
             {
                 End();
+                return;
+            }
+
+            // A reload (New run, a retry) brings back the setup the game saved or launched.
+            ClimbingModePatches.Apply();
+            if (Time.unscaledTime >= _nextClaim)
+            {
+                ClaimSave();
             }
 
             return;
@@ -82,11 +100,17 @@ internal sealed class FreeClimbSession
 
         if (!GameApi.IsFreeClimbGame)
         {
+            if (GameApi.IsPlayersSummitGame(out var world))
+            {
+                FreeClimbSaves.Release(world);
+            }
+
             if (_launched)
             {
                 MelonLogger.Warning($"Free climb was launched but the running game has other rules ({GameApi.DescribeGameSetup()}); the mod stays off.");
                 _launched = false;
                 _pendingRoute = null;
+                _launchedWorld = null;
             }
 
             return;
@@ -98,6 +122,11 @@ internal sealed class FreeClimbSession
     private void Start()
     {
         IsActive = true;
+        ClimbingModePatches.Apply();
+        // A free-climb save continued from the game's own menu has no launch of ours.
+        _saveWorld = _launchedWorld ?? GameApi.CurrentWorld;
+        _launchedWorld = null;
+        ClaimSave();
         _launched = false;
         GameApi.MarkRunAsCheating();
         MelonLogger.Msg($"Free climb started ({GameApi.DescribeGameSetup()}).");
@@ -116,13 +145,27 @@ internal sealed class FreeClimbSession
     {
         _launched = false;
         _pendingRoute = null;
+        _launchedWorld = null;
         if (!IsActive)
         {
             return;
         }
 
+        // Quitting saves just before this.
+        ClaimSave();
         IsActive = false;
+        ClimbingModePatches.Restore();
         MelonLogger.Msg("Free climb ended.");
         Ended?.Invoke();
+    }
+
+    /// <summary>Note that the summit save on this session's mountain is a free climb (see <see cref="FreeClimbSaves"/>).</summary>
+    private void ClaimSave()
+    {
+        _nextClaim = Time.unscaledTime + ClaimSeconds;
+        if (_saveWorld is { } world)
+        {
+            FreeClimbSaves.Claim(world);
+        }
     }
 }

@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CairnRouteMaker.Controls;
 using CairnRouteMaker.Game;
 using Il2Cpp;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppTheGameBakers.Cairn.UI;
+using CairnRouteMaker.Routes;
 using Il2CppTMPro;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -15,12 +19,15 @@ using Object = UnityEngine.Object;
 namespace CairnRouteMaker.Extras;
 
 /// <summary>
-/// The Extras page's Loading Screen Art viewer: the paintings the game shows while it loads, then the
-/// pictures of the trip from Tenzing to Kami, one at a time and full screen, flipped through with
-/// left / right. The pictures are the game's own sprites, read from its LoadingScreen
-/// (<c>possibleSprites</c> and <c>tenzenToKamiSprites</c>) when the viewer opens, so nothing is copied.
-/// The page counter and hints fade out when left alone, leaving just the picture. While it's open the
-/// title screen's input is blocked and devices are read directly.
+/// The Extras page's Loading Screen Art viewer, one picture at a time and full screen, in three sets:
+/// Story (the paintings the game shows while it loads), On the Trail (each crag's own loading screen)
+/// and Tenzen to Kami (the pictures of that trip). Left / right flips through the pictures, up / down
+/// (LB / RB on a gamepad) jumps to the next set, and the sets' names sit in a row along the bottom so
+/// the later ones aren't missed. The game keeps them as Addressables references on its LoadingScreen
+/// (<c>possibleSpritesReferences</c>, <c>worldLoadingScreens</c> and <c>tenzenToKamiSprites</c>); the
+/// viewer loads the picture on show and its neighbours, and releases them all when it closes. The sets,
+/// counter and hints fade out when left alone, leaving just the picture. While it's open the title
+/// screen's input is blocked and devices are read directly.
 /// </summary>
 internal sealed class LoadingArtGallery
 {
@@ -32,8 +39,9 @@ internal sealed class LoadingArtGallery
     private const float ChromeFadeSeconds = 0.6f;
     private const float StickThreshold = 0.6f;
 
-    private const string LoadingArtTitle = "Loading Screen Art";
-    private const string TenzingToKamiTitle = "Tenzing to Kami";
+    private const string StoryTitle = "Story";
+    private const string OnTheTrailTitle = "On the Trail";
+    private const string TenzenToKamiTitle = "Tenzen to Kami";
 
     private readonly List<Picture> _art = new();
     /// <summary>The title screen's menu the viewer opened over; null when it wasn't found.</summary>
@@ -63,6 +71,8 @@ internal sealed class LoadingArtGallery
     private RectTransform _leftArrow;
     private RectTransform _rightArrow;
     private bool? _shownGamepad;
+    /// <summary>The colour of the sets not on show, as a rich text colour.</summary>
+    private string _otherSetColor = "FFFFFF80";
 
     public LoadingArtGallery()
     {
@@ -79,7 +89,7 @@ internal sealed class LoadingArtGallery
         _menu = Object.FindFirstObjectByType<MainMenu>();
         _watchMenu = _menu != null;
         FindArt();
-        MelonLogger.Msg($"Opening the loading screen art: {Count(LoadingArtTitle)} loading screens, {Count(TenzingToKamiTitle)} Tenzing to Kami pictures.");
+        MelonLogger.Msg($"Opening the loading screen art: {Count(StoryTitle)} story loading screens, {Count(OnTheTrailTitle)} On the Trail screens, {Count(TenzenToKamiTitle)} Tenzen to Kami pictures.");
         if (_root == null)
         {
             Build();
@@ -93,6 +103,7 @@ internal sealed class LoadingArtGallery
         _shownGamepad = null;
         _lastPointer = Mouse.current?.position.ReadValue() ?? Vector2.zero;
         _index = _art.Count == 0 ? 0 : Mathf.Clamp(_index, 0, _art.Count - 1);
+        LoadAround(_index);
         _above.sprite = _art.Count > 0 ? _art[_index].Sprite : null;
         _below.sprite = null;
         _fade = 1f;
@@ -113,9 +124,14 @@ internal sealed class LoadingArtGallery
         _menu = null;
         _watchMenu = false;
         _root.SetActive(false);
-        // Our sprites belong to the game; don't hold on to them.
-        _art.Clear();
         _above.sprite = _below.sprite = null;
+        // Let the game unload what we loaded.
+        foreach (var picture in _art)
+        {
+            picture.Release();
+        }
+
+        _art.Clear();
         // Next frame: the key that closed the viewer mustn't also reach the Extras page (B there goes back).
         _unblockAtFrame = Time.frameCount + 1;
     }
@@ -152,12 +168,14 @@ internal sealed class LoadingArtGallery
             return;
         }
 
+        ShowLoaded();
         Animate();
     }
 
     private void HandleInput()
     {
         var step = 0;
+        var jump = 0;
         var back = ModControls.Exit.KeyPressed || ModControls.Exit.PadPressed;
         var keyboard = Keyboard.current;
         var mouse = Mouse.current;
@@ -171,6 +189,9 @@ internal sealed class LoadingArtGallery
             if (keyboard.leftArrowKey.wasPressedThisFrame || keyboard.aKey.wasPressedThisFrame) step -= 1;
             if (keyboard.rightArrowKey.wasPressedThisFrame || keyboard.dKey.wasPressedThisFrame
                 || keyboard.spaceKey.wasPressedThisFrame || keyboard.enterKey.wasPressedThisFrame) step += 1;
+            if (keyboard.upArrowKey.wasPressedThisFrame || keyboard.wKey.wasPressedThisFrame || keyboard.pageUpKey.wasPressedThisFrame) jump -= 1;
+            if (keyboard.downArrowKey.wasPressedThisFrame || keyboard.sKey.wasPressedThisFrame
+                || keyboard.pageDownKey.wasPressedThisFrame || keyboard.tabKey.wasPressedThisFrame) jump += 1;
             back |= keyboard.escapeKey.wasPressedThisFrame || keyboard.backspaceKey.wasPressedThisFrame;
         }
 
@@ -220,16 +241,20 @@ internal sealed class LoadingArtGallery
                 stickStep = stick > 0f ? 1 : -1;
             }
 
-            var pressed = pad.dpad.left.wasPressedThisFrame || pad.leftShoulder.wasPressedThisFrame;
-            var pressedNext = pad.dpad.right.wasPressedThisFrame || pad.rightShoulder.wasPressedThisFrame || pad.buttonSouth.wasPressedThisFrame;
+            var pressed = pad.dpad.left.wasPressedThisFrame;
+            var pressedNext = pad.dpad.right.wasPressedThisFrame || pad.buttonSouth.wasPressedThisFrame;
+            var pressedSet = pad.dpad.up.wasPressedThisFrame || pad.leftShoulder.wasPressedThisFrame;
+            var pressedNextSet = pad.dpad.down.wasPressedThisFrame || pad.rightShoulder.wasPressedThisFrame;
             var pressedBack = pad.buttonEast.wasPressedThisFrame;
-            if (pressed || pressedNext || pressedBack || stickStep != 0 || pad.buttonNorth.wasPressedThisFrame || pad.buttonWest.wasPressedThisFrame)
+            if (pressed || pressedNext || pressedSet || pressedNextSet || pressedBack || stickStep != 0
+                || pad.buttonNorth.wasPressedThisFrame || pad.buttonWest.wasPressedThisFrame)
             {
                 any = true;
                 _usingGamepad = true;
             }
 
             step += stickStep + (pressed ? -1 : 0) + (pressedNext ? 1 : 0);
+            jump += (pressedSet ? -1 : 0) + (pressedNextSet ? 1 : 0);
             back |= pressedBack;
         }
 
@@ -244,20 +269,68 @@ internal sealed class LoadingArtGallery
             _lastInput = Time.unscaledTime;
         }
 
-        if (step != 0 && _art.Count > 1)
+        if (jump != 0)
         {
-            Turn(step > 0 ? 1 : -1);
+            JumpSet(jump > 0 ? 1 : -1);
+        }
+        else if (step != 0 && _art.Count > 1)
+        {
+            GoTo((_index + (step > 0 ? 1 : -1) + _art.Count) % _art.Count);
         }
     }
 
-    /// <summary>Go to the next or previous picture, wrapping round, and cross-fade to it.</summary>
-    private void Turn(int direction)
+    /// <summary>Go to the first picture of the next or previous set, wrapping round.</summary>
+    private void JumpSet(int direction)
     {
-        _index = (_index + direction + _art.Count) % _art.Count;
+        var sets = Sets();
+        if (sets.Count < 2)
+        {
+            return;
+        }
+
+        var set = sets[(sets.IndexOf(_art[_index].Section) + direction + sets.Count) % sets.Count];
+        GoTo(_art.FindIndex(picture => picture.Section == set));
+    }
+
+    /// <summary>Show the picture at <paramref name="index"/>, cross-fading to it.</summary>
+    private void GoTo(int index)
+    {
+        if (index == _index)
+        {
+            return;
+        }
+
+        _index = index;
+        LoadAround(_index);
         _below.sprite = _above.sprite;
         _above.sprite = _art[_index].Sprite;
         _fade = 0f;
         ShowPicture();
+    }
+
+    /// <summary>Start loading the picture at <paramref name="index"/> and the ones either side, for flipping.</summary>
+    private void LoadAround(int index)
+    {
+        for (var offset = -1; offset <= 1 && _art.Count > 0; offset++)
+        {
+            _art[(index + offset + _art.Count) % _art.Count].Load();
+        }
+    }
+
+    /// <summary>The picture on show has finished loading since it was turned to: put it up.</summary>
+    private void ShowLoaded()
+    {
+        if (_art.Count == 0)
+        {
+            return;
+        }
+
+        var sprite = _art[_index].Sprite;
+        if (sprite != null && (_above.sprite == null || _above.sprite.Pointer != sprite.Pointer))
+        {
+            _above.sprite = sprite;
+            ShowPicture();
+        }
     }
 
     private void ShowPicture()
@@ -272,10 +345,13 @@ internal sealed class LoadingArtGallery
         else
         {
             // Counted within the picture's own set.
-            var section = _art[_index].Section;
-            var first = _art.FindIndex(picture => picture.Section == section);
-            _counter.text = $"{_index - first + 1} / {Count(section)}";
-            _title.text = section;
+            var picture = _art[_index];
+            var section = picture.Section;
+            var first = _art.FindIndex(other => other.Section == section);
+            var count = $"{_index - first + 1} / {Count(section)}";
+            _counter.text = (picture.Caption == null ? count : $"<color=#FFFFFF>{picture.Caption}</color><space=1em>{count}")
+                + (picture.Failed ? "  (couldn't load)" : picture.Sprite == null ? "  (loading)" : "");
+            _title.text = string.Join("<space=1.5em>", Sets().Select(set => set == section ? set : $"<size=70%><color=#{_otherSetColor}>{set}</color></size>"));
         }
 
         var arrows = _art.Count > 1;
@@ -303,14 +379,15 @@ internal sealed class LoadingArtGallery
         {
             _shownGamepad = _usingGamepad;
             _hints.text = _usingGamepad
-                ? Hint("D-pad", "Browse") + Hint("B", "Back")
-                : Hint("Arrows", "Browse") + Hint("Esc", "Back");
+                ? Hint("D-pad", "Browse") + Hint("LB / RB", "Sets") + Hint("B", "Back")
+                : Hint("Left / Right", "Browse") + Hint("Up / Down", "Sets") + Hint("Esc", "Back");
         }
     }
 
     /// <summary>
-    /// Every distinct picture on the game's loading screens, in the game's order: the loading art,
-    /// then the Tenzing to Kami pictures in the player's language.
+    /// Every distinct picture on the game's loading screens, in the game's order: the story's loading
+    /// art, each crag's own screens, then the Tenzen to Kami pictures, in the player's language.
+    /// Nothing is loaded yet.
     /// </summary>
     private void FindArt()
     {
@@ -318,9 +395,27 @@ internal sealed class LoadingArtGallery
         var screens = Resources.FindObjectsOfTypeAll<LoadingScreen>();
         foreach (var screen in screens)
         {
-            foreach (var sprite in screen.possibleSprites ?? new Il2CppReferenceArray<Sprite>(0))
+            foreach (var reference in screen.possibleSpritesReferences ?? new Il2CppReferenceArray<AssetReference>(0))
             {
-                Add(sprite, LoadingArtTitle);
+                Add(reference, StoryTitle);
+            }
+        }
+
+        foreach (var screen in screens)
+        {
+            var worlds = (screen.worldLoadingScreens ?? new Il2CppReferenceArray<LoadingScreen.WorldSpecificLoadingScreen>(0))
+                .Where(world => world != null)
+                .ToList();
+            foreach (var world in worlds)
+            {
+                // Named after the crag, and the climber when the crag has a screen for each (Ruka does).
+                var caption = ZoneNames.PrettyWorld(world.world.ToString());
+                if (world.character != PawnManager.Character.Invalid && worlds.Count(other => other.world == world.world) > 1)
+                {
+                    caption += $" ({world.character})";
+                }
+
+                Add(InLanguage(world.sprite), OnTheTrailTitle, caption);
             }
         }
 
@@ -328,38 +423,130 @@ internal sealed class LoadingArtGallery
         {
             foreach (var localized in screen.tenzenToKamiSprites ?? new Il2CppReferenceArray<LocalizedSprite>(0))
             {
-                if (localized == null)
-                {
-                    continue;
-                }
-
-                Sprite sprite;
-                try
-                {
-                    sprite = localized.Get() ?? localized.defaultSprite;
-                }
-                catch (Exception e)
-                {
-                    MelonLogger.Warning($"Couldn't get {localized.name} in the player's language: {e.Message}");
-                    sprite = localized.defaultSprite;
-                }
-
-                Add(sprite, TenzingToKamiTitle);
+                Add(InLanguage(localized), TenzenToKamiTitle);
             }
         }
     }
 
-    private void Add(Sprite sprite, string section)
+    /// <summary>The player's language's version of a picture, or the default one.</summary>
+    private static AssetReference InLanguage(LocalizedSprite localized)
     {
-        if (sprite != null && !_art.Exists(known => known.Sprite.Pointer == sprite.Pointer))
+        if (localized == null)
         {
-            _art.Add(new Picture(sprite, section));
+            return null;
+        }
+
+        try
+        {
+            return localized.Get() ?? localized.defaultSpriteReference;
+        }
+        catch (Exception e)
+        {
+            MelonLogger.Warning($"Couldn't get {localized.name} in the player's language: {e.Message}");
+            return localized.defaultSpriteReference;
+        }
+    }
+
+    private void Add(AssetReference reference, string section, string caption = null)
+    {
+        var key = reference == null ? null : reference.RuntimeKey?.ToString();
+        if (!string.IsNullOrEmpty(key) && !_art.Exists(known => known.Key == key))
+        {
+            _art.Add(new Picture(reference, key, section, caption));
         }
     }
 
     private int Count(string section) => _art.FindAll(picture => picture.Section == section).Count;
 
-    private readonly record struct Picture(Sprite Sprite, string Section);
+    /// <summary>The sets that have pictures, in order.</summary>
+    private List<string> Sets() => _art.Select(picture => picture.Section).Distinct().ToList();
+
+    /// <summary>One picture: where the game keeps it, and our own load of it once asked for.</summary>
+    private sealed class Picture
+    {
+        private readonly AssetReference _reference;
+        private AsyncOperationHandle<Sprite> _handle;
+        private bool _loading;
+        private Sprite _sprite;
+
+        public Picture(AssetReference reference, string key, string section, string caption)
+        {
+            _reference = reference;
+            Key = key;
+            Section = section;
+            Caption = caption;
+        }
+
+        public string Key { get; }
+        public string Section { get; }
+        /// <summary>What the picture is of, when its set doesn't say: the crag, for On the Trail.</summary>
+        public string Caption { get; }
+        public bool Failed { get; private set; }
+
+        /// <summary>The picture, or null while it's loading (or if it failed).</summary>
+        public Sprite Sprite
+        {
+            get
+            {
+                if (_loading && _handle.IsDone)
+                {
+                    _loading = false;
+                    if (_handle.Status == AsyncOperationStatus.Succeeded)
+                    {
+                        _sprite = _handle.Result;
+                    }
+                    else
+                    {
+                        Failed = true;
+                        MelonLogger.Warning($"Couldn't load the loading screen picture {Key}: {_handle.OperationException?.Message ?? _handle.Status.ToString()}");
+                    }
+                }
+
+                return _sprite;
+            }
+        }
+
+        /// <summary>
+        /// Our own load by key, not the reference's LoadAssetAsync: that keeps one handle on the
+        /// reference, which the game's loading screen uses too.
+        /// </summary>
+        public void Load()
+        {
+            if (_loading || _sprite != null || Failed)
+            {
+                return;
+            }
+
+            try
+            {
+                _handle = Addressables.LoadAssetAsync<Sprite>(_reference.RuntimeKey);
+                _loading = true;
+            }
+            catch (Exception e)
+            {
+                Failed = true;
+                MelonLogger.Warning($"Couldn't start loading the loading screen picture {Key}: {e.Message}");
+            }
+        }
+
+        public void Release()
+        {
+            if (_handle != null && (_loading || _sprite != null))
+            {
+                try
+                {
+                    Addressables.Release<Sprite>(_handle);
+                }
+                catch (Exception e)
+                {
+                    MelonLogger.Warning($"Couldn't release the loading screen picture {Key}: {e.Message}");
+                }
+            }
+
+            _loading = false;
+            _sprite = null;
+        }
+    }
 
     private void Build()
     {
@@ -413,6 +600,8 @@ internal sealed class LoadingArtGallery
         Style(_title, style, style.FontSize * 0.9f, style.Selected);
         Style(_counter, style, style.FontSize * 0.55f, WithAlpha(style.NotSelected, 0.75f));
         Style(_hints, style, style.FontSize * 0.5f, WithAlpha(style.NotSelected, 0.7f));
+        Color32 other = WithAlpha(style.NotSelected, 0.6f);
+        _otherSetColor = $"{other.r:X2}{other.g:X2}{other.b:X2}{other.a:X2}";
         foreach (var arrow in new[] { _leftArrow, _rightArrow })
         {
             var image = arrow.GetComponent<Image>();

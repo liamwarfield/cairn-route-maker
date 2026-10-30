@@ -1,9 +1,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using CairnRouteMaker.FreeClimb;
+using CairnRouteMaker.Routes;
 using Il2Cpp;
 using Il2CppTheGameBakers.Cairn;
 using Il2CppTheGameBakers.Cairn.IO;
+using Il2CppTheGameBakers.Cairn.Save;
 using Il2CppTheGameBakers.Cairn.UI;
 using MelonLoader;
 using Unity.Cinemachine;
@@ -241,14 +244,23 @@ internal static class GameApi
         }
     }
 
-    /// <summary>The playable mountains (not the test world) the game knows about.</summary>
+    /// <summary>
+    /// The playable mountains (not the test world) the game has zones for, in the game's order:
+    /// Kami, Lakpa, Tenzen and Apa, then the On the Trail DLC's crags. DLC worlds that aren't
+    /// installed (the game lists their names ahead of their release) have no zones, so they're left out.
+    /// </summary>
     public static List<WorldInfo> Worlds()
     {
         var result = new List<WorldInfo>();
         var current = CurrentWorld;
-        foreach (var id in new[] { StreamingTweakables.World.Kami, StreamingTweakables.World.Lakpa, StreamingTweakables.World.Tenzing, StreamingTweakables.World.Apa })
+        foreach (StreamingTweakables.World id in Enum.GetValues(typeof(StreamingTweakables.World)))
         {
-            if (TryGetWorldData(id, out _))
+            if (id is StreamingTweakables.World.Invalid or StreamingTweakables.World.StreamingTest)
+            {
+                continue;
+            }
+
+            if (TryGetWorldData(id, out var data) && data.zones != null && data.zones.Count > 0)
             {
                 result.Add(new WorldInfo(id, id == current));
             }
@@ -322,11 +334,22 @@ internal static class GameApi
     /// From the main menu, start a story-free game at a spawn point. Goes through the game's own
     /// Summit launch (Summit runs save to their own SUMMIT slots, never to story saves) with
     /// free-climb rules instead of the player's Summit settings.
+    /// <para>
+    /// Since On the Trail, Summit keeps one save per mountain, and its launch continues the
+    /// mountain's save if there is one, or with forceSummitNewGame wipes it. So a save in the way is
+    /// only replaced when it's a free climb of ours (<see cref="FreeClimbSaves"/>) or
+    /// <paramref name="replacePlayersSave"/> is set; otherwise <paramref name="saveInTheWay"/> is set
+    /// and nothing is launched.
+    /// </para>
     /// </summary>
-    public static bool TryLaunchFreeClimb(StreamingTweakables.World world, string zoneName, string spawnerName, out string reason)
+    public static bool TryLaunchFreeClimb(StreamingTweakables.World world, string zoneName, string spawnerName, bool replacePlayersSave,
+        out string reason, out bool saveInTheWay)
     {
+        saveInTheWay = false;
         var menu = Object.FindFirstObjectByType<MainMenu>();
-        var summit = Object.FindFirstObjectByType<SummitMenu>(FindObjectsInactive.Include);
+        // The launch step reads its world, zone and setup from this element.
+        var launch = Object.FindFirstObjectByType<MainMenuLaunchGameElement>(FindObjectsInactive.Include);
+        var summit = launch == null ? null : launch.summitMenu;
         if (menu == null || summit == null)
         {
             reason = "The main menu isn't showing.";
@@ -364,35 +387,100 @@ internal static class GameApi
             return false;
         }
 
+        var replace = false;
+        if (TryFindSummitSave(world, out var slot))
+        {
+            var savedAt = FreeClimbSaves.SlotWriteTime(slot);
+            if (!FreeClimbSaves.IsOurs(world, savedAt) && !replacePlayersSave)
+            {
+                saveInTheWay = true;
+                reason = $"{ZoneNames.PrettyWorld(world.ToString())} has a run saved in On the Trail"
+                    + (savedAt is { } time ? $" (last saved {time.ToLocalTime():d MMM, HH:mm})" : "")
+                    + ". Free climb there would replace it: choose it again to do that.";
+                return false;
+            }
+
+            replace = true;
+            MelonLogger.Msg($"Replacing the summit save in slot {slot} ({(FreeClimbSaves.IsOurs(world, savedAt) ? "an earlier free climb" : "the player said so")}).");
+        }
+
         // The character picks the hands the bivouac's taping screen shows; with none set it finds
         // no hands and throws, so taping fingers broke the game.
         var setup = new GameSetup(spawner) { summitMode = true, constraints = FreeClimbConstraints, character = PawnManager.Character.Aava };
         setup.spawner = SpawnerObjectName(data, zone, spawner.name);
         summit.SelectedWorld = data;
         summit.SelectedZone = zone;
-        summit.SelectedSpawner = spawner;
         summit.GameSetup = setup;
+        // False would continue the mountain's save instead of starting ours.
+        menu.nextGameStartOptions.forceSummitNewGame = replace;
         MelonLogger.Msg($"Launching free climb: {world}/{zoneName} at {spawnerName} ({setup.ToString()}).");
+        LoadingScreenPatches.OnFreeClimbLaunching();
         try
         {
-            menu.TransitionToStep(MainMenu.Step.LaunchNewSummitGame);
+            menu.TransitionToStep(MainMenu.Step.LaunchSummitGame);
         }
         catch (Exception e)
         {
+            LoadingScreenPatches.OnFreeClimbLaunchFailed();
             MelonLogger.Error($"The menu refused to launch: {e}");
             reason = "the game's menu refused (see log).";
             return false;
         }
 
+        FreeClimbSaves.Claim(world);
         reason = null;
         return true;
     }
 
+    /// <summary>Whether a mountain's summit save slot holds a game, and which slot that is.</summary>
+    private static bool TryFindSummitSave(StreamingTweakables.World world, out byte slot)
+    {
+        slot = 0;
+        try
+        {
+            var saves = SavegameManager.Instance;
+            return saves != null && saves.HasAnySummitSaveForWorld(world, out slot);
+        }
+        catch (Exception e)
+        {
+            // Better not to launch than to wipe a save we couldn't see.
+            MelonLogger.Warning($"Couldn't check for a summit save on {world}: {e.Message}");
+            slot = byte.MaxValue;
+            return true;
+        }
+    }
+
     /// <summary>
-    /// Whether the running game is one we launched: a Summit-type game with exactly the free-climb
-    /// rules, give or take hunger and thirst (a route can switch them on). Story games and the
-    /// player's own Summit runs never match. Says nothing about whether
-    /// Ava is in the world yet; the game keeps its last setup while back on the main menu.
+    /// The running game is the player's own Summit or On the Trail run on <paramref name="world"/>:
+    /// whatever's in that mountain's save slot is theirs now.
+    /// </summary>
+    public static bool IsPlayersSummitGame(out StreamingTweakables.World world)
+    {
+        world = default;
+        try
+        {
+            var scenes = CairnSceneManager.Instance;
+            var setup = scenes == null ? null : scenes.GameSetup;
+            if (setup == null || !setup.summitMode || IsFreeClimbGame || CurrentWorld is not { } current)
+            {
+                return false;
+            }
+
+            world = current;
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether the running game is one we launched: a game with exactly the free-climb rules, give or
+    /// take hunger and thirst (a route can switch them on). Story games and the player's own Summit
+    /// runs never match. It launches as a Summit game, but plays with summitMode cleared
+    /// (<see cref="ClimbingModePatches"/>), so that isn't checked. Says nothing about whether Ava is in
+    /// the world yet; the game keeps its last setup while back on the main menu.
     /// </summary>
     public static bool IsFreeClimbGame
     {
@@ -403,8 +491,7 @@ internal static class GameApi
                 var scenes = CairnSceneManager.Instance;
                 var setup = scenes == null ? null : scenes.GameSetup;
                 // A route's loadout can switch hunger, thirst and cold on (see AvaLoadout).
-                return setup != null && setup.summitMode
-                    && (setup.constraints | GamemodeConstraints.NoPhysiologicalNeeds) == FreeClimbConstraints;
+                return setup != null && (setup.constraints | GamemodeConstraints.NoPhysiologicalNeeds) == FreeClimbConstraints;
             }
             catch (Exception)
             {
@@ -433,7 +520,7 @@ internal static class GameApi
 
             return $"step={(menu == null ? "(no menu)" : menu.step.ToString())} busy={(menu != null && menu.IsBusy)} "
                 + $"selected={selected} eventSystem={(events == null ? "(none)" : events.enabled.ToString())} modules=[{string.Join(", ", modules)}] "
-                + $"disableInputs={(input == null ? "(no input manager)" : input.disableInputs.ToString())}";
+                + $"disableInputs={(input == null ? "(no input manager)" : input.disabledInputs.ToString())}";
         }
         catch (Exception e)
         {
@@ -697,7 +784,7 @@ internal static class GameApi
     {
         var scenes = CairnSceneManager.Instance;
         var setup = scenes.GameSetup;
-        if (setup == null || !setup.summitMode || zone.spawnersForMainMenu == null || zone.spawnersForMainMenu.Count == 0)
+        if (setup == null || !IsFreeClimbGame || zone.spawnersForMainMenu == null || zone.spawnersForMainMenu.Count == 0)
         {
             MelonLogger.Msg($"Travelling to {zone.name} without changing the spawn point ({(setup == null ? "no game setup" : $"spawner {setup.spawner}")}).");
             return;
@@ -797,14 +884,14 @@ internal static class GameApi
 
         if (block)
         {
-            _savedDisableInputs = input.disableInputs;
+            _savedDisableInputs = input.disabledInputs;
             input.DisableInputs();
             input.ShowAndFreeMouse();
         }
         else
         {
             input.EnableInputs();
-            input.disableInputs = _savedDisableInputs;
+            input.disabledInputs = _savedDisableInputs;
             input.UpdateInputContext();
             input.HideAndLockMouse();
         }
@@ -831,7 +918,7 @@ internal static class GameApi
         {
             if (input != null)
             {
-                _savedMenuDisableInputs = input.disableInputs;
+                _savedMenuDisableInputs = input.disabledInputs;
                 input.DisableInputs();
             }
 
@@ -853,7 +940,7 @@ internal static class GameApi
             if (input != null)
             {
                 input.EnableInputs();
-                input.disableInputs = _savedMenuDisableInputs;
+                input.disabledInputs = _savedMenuDisableInputs;
                 input.UpdateInputContext();
             }
 
@@ -1244,7 +1331,7 @@ internal static class GameApi
 
     /// <summary>
     /// Undo what dying did to the sound when the game carries on without loading a level (see
-    /// GameOverPatches): clear SoundManager.BackToMainMenu, put the sound engine's game state back
+    /// GameOverPatches): clear SoundManager.MenuToLoading, put the sound engine's game state back
     /// to in-game (what SoundManager does on returning to the game when the flag is clear), and
     /// start the zone's music again (what MusicManager does when a game starts).
     /// </summary>
@@ -1253,8 +1340,8 @@ internal static class GameApi
         var sound = SoundManager.Instance;
         if (sound != null)
         {
-            var wasLeaving = sound.BackToMainMenu;
-            sound.BackToMainMenu = false;
+            var wasLeaving = sound.MenuToLoading;
+            sound.MenuToLoading = false;
             sound.SetState(Il2CppAK.STATES.STATE_GAME.GROUP, Il2CppAK.STATES.STATE_GAME.STATE.INGAME);
             MelonLogger.Msg($"Restored in-game sound (sound manager was {(wasLeaving ? "" : "not ")}flagged as leaving, paused={sound.IsPaused}).");
         }
