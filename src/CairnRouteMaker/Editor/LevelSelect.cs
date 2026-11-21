@@ -450,7 +450,7 @@ internal sealed partial class LevelSelect
         Begin(ZoneNames.Pretty(zone), $"Free Climb · {Mountain(world)}", "Choose where to start.");
         foreach (var spawner in spawners)
         {
-            Add(new Entry(spawner, false, true, () => _launch(new LaunchTarget(world, zone, spawner, null)), leavesEditor: true));
+            Add(new Entry(ZoneNames.PrettySpawner(spawner), false, true, () => _launch(new LaunchTarget(world, zone, spawner, null)), leavesEditor: true));
         }
 
         End();

@@ -197,7 +197,7 @@ internal static class MainMenuPatches
         var button = CloneButton(story, ButtonName, Label, "opening Free Climb", () => FreeClimbClicked?.Invoke());
         PlaceBelow(story, button.transform, element);
         MelonLogger.Msg($"Added the Free Climb button under {story.name} (in {story.transform.parent.name}, layout group: {story.transform.parent.GetComponent<LayoutGroup>() != null}).");
-        LogPositions(story, element.summitModeButton, button, element.settingsButton, element.extrasButton, element.creditsButton, element.quitButton);
+        LogPositions(story, element.summitButton, button, element.settingsButton, element.extrasButton, element.creditsButton, element.quitButton);
         return button;
     }
 
@@ -316,9 +316,9 @@ internal static class MainMenuPatches
         var storyRect = story.GetComponent<RectTransform>();
         var copyRect = copy.GetComponent<RectTransform>();
         var below = new List<RectTransform>();
-        foreach (var button in new[] { element.summitModeButton, element.settingsButton, element.extrasButton, element.creditsButton, element.steamPageButton, element.quitButton })
+        foreach (var button in new[] { element.summitButton, element.settingsButton, element.extrasButton, element.creditsButton, element.steamPageButton, element.quitButton })
         {
-            // Hidden buttons (Summit, in some builds) keep their old slot and would skew the row height.
+            // Hidden buttons (the DLC's, in some builds) keep their old slot and would skew the row height.
             if (button != null && button.gameObject.activeSelf && button.transform.parent == story.transform.parent)
             {
                 var rect = button.GetComponent<RectTransform>();

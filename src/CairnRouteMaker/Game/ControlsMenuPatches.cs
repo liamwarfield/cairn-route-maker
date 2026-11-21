@@ -12,7 +12,6 @@ using Il2CppTheGameBakers.Cairn;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using InputManager = Il2Cpp.InputManager;
 
 namespace CairnRouteMaker.Game;
 
@@ -24,9 +23,9 @@ namespace CairnRouteMaker.Game;
 /// keyboard/mouse. Each RebindData entry becomes a row, and an entry whose headerLabelLocKey isn't
 /// empty gets a heading above it. We add our entries to the end of both lists before Start runs.
 /// Labels are localisation keys, so ours are made-up keys that the LocalizationManager.Get patch
-/// answers. Rows reach their action through InputActionReferenceWrapper.InputAction, which looks
-/// the action up in InputManager.assetToInstanceCache before the game's own asset, so our actions go
-/// in that cache. See docs/game-internals.md.
+/// answers. Rows reach their action through InputActionReferenceWrapper.InputAction, which asks
+/// TGBTools' InputManager to resolve it. That returns an action from an asset it has no resolver
+/// for (ours) unchanged, so our actions need no registering. See docs/game-internals.md.
 /// </summary>
 internal static class ControlsMenuPatches
 {
@@ -48,18 +47,10 @@ internal static class ControlsMenuPatches
         private static void Prefix(RebindSheet __instance) => Run("adding the mod's controls to the remap screen", () =>
         {
             ModControls.EnsureCreated();
-            RegisterActions();
             AddContexts();
             AddRows(__instance.kbmRebindList, gamepad: false);
             AddRows(__instance.gamepadRebindList, gamepad: true);
         });
-    }
-
-    /// <summary>The rows look their actions up again when the screen is opened and on every rebind.</summary>
-    [HarmonyPatch(typeof(RebindSheet), nameof(RebindSheet.OnShow))]
-    private static class OnShowPatch
-    {
-        private static void Prefix() => Run("registering the mod's controls", RegisterActions);
     }
 
     /// <summary>Called after every rebind and reset, ours or the game's.</summary>
@@ -81,26 +72,6 @@ internal static class ControlsMenuPatches
 
             __result = text;
             return false;
-        }
-    }
-
-    /// <summary>Map each of our actions to itself, so the game's lookup finds it instead of returning null.</summary>
-    private static void RegisterActions()
-    {
-        var input = InputManager.Instance;
-        var cache = input == null ? null : input.assetToInstanceCache;
-        if (cache == null)
-        {
-            MelonLogger.Warning("InputManager isn't ready; the mod's controls can't be rebound yet.");
-            return;
-        }
-
-        foreach (var action in Actions().Select(a => a.Action))
-        {
-            if (!cache.ContainsKey(action))
-            {
-                cache.Add(action, action);
-            }
         }
     }
 

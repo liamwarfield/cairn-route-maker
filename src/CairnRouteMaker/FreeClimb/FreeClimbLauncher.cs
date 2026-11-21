@@ -1,6 +1,7 @@
 using CairnRouteMaker.Editor;
 using CairnRouteMaker.Game;
 using CairnRouteMaker.Routes;
+using Il2Cpp;
 using MelonLoader;
 using UnityEngine;
 
@@ -13,6 +14,9 @@ namespace CairnRouteMaker.FreeClimb;
 /// </summary>
 internal sealed class FreeClimbLauncher
 {
+    /// <summary>How long a second choice of the same mountain counts as saying yes to replacing its save.</summary>
+    private const float ConfirmSeconds = 15f;
+
     private readonly RouteStorage _storage;
     private readonly FreeClimbSession _session;
     private readonly LevelSelect _menu = new();
@@ -23,6 +27,8 @@ internal sealed class FreeClimbLauncher
     private int _unblockAtFrame = -1;
     private string _status;
     private float _statusTime;
+    /// <summary>The mountain whose On the Trail save the player was just warned about, and when.</summary>
+    private (StreamingTweakables.World World, float Time)? _warnedAbout;
 
     public FreeClimbLauncher(RouteStorage storage, FreeClimbSession session)
     {
@@ -130,13 +136,21 @@ internal sealed class FreeClimbLauncher
 
     private void Launch(LevelSelect.LaunchTarget target)
     {
-        if (!GameApi.TryLaunchFreeClimb(target.World, target.Zone, target.Spawner, out var reason))
+        // Choosing the same mountain again soon after the warning replaces the player's save.
+        var confirmed = _warnedAbout is { } warned && warned.World == target.World && Time.unscaledTime - warned.Time < ConfirmSeconds;
+        _warnedAbout = null;
+        if (!GameApi.TryLaunchFreeClimb(target.World, target.Zone, target.Spawner, confirmed, out var reason, out var saveInTheWay))
         {
-            SetStatus($"Couldn't start free climb: {reason}");
+            if (saveInTheWay)
+            {
+                _warnedAbout = (target.World, Time.unscaledTime);
+            }
+
+            SetStatus(saveInTheWay ? reason : $"Couldn't start free climb: {reason}");
             return;
         }
 
-        _session.OnLaunched(target.Route);
+        _session.OnLaunched(target.Route, target.World);
         Close(showTitleMenu: false);
     }
 

@@ -86,7 +86,7 @@ internal static class AvaLoadout
         try
         {
             SetSurvivalNeeds(loadout.SurvivalNeeds);
-            var data = GameDataManager.Instance;
+            var data = SurvivalManager.Instance;
             if (data != null)
             {
                 var before = DescribeStats(data);
@@ -131,8 +131,8 @@ internal static class AvaLoadout
                 SetSurvivalNeeds(false);
             }
 
-            var data = GameDataManager.Instance;
-            if (!next.EndGame && data != null && data.InEndGame)
+            var data = SurvivalManager.Instance;
+            if (!next.EndGame && data != null && InEndGame)
             {
                 SetEndGame(data, false);
                 FillNeeds(data);
@@ -346,10 +346,10 @@ internal static class AvaLoadout
     /// while it plays): set the flag, show the HUD's caps fully drawn, and let the stats settle
     /// under the caps in <see cref="FillNeeds"/> and <see cref="SetHealth"/>.
     /// </summary>
-    private static void SetEndGame(GameDataManager data, bool on)
+    private static void SetEndGame(SurvivalManager data, bool on)
     {
-        var game = data.GameData;
-        if (game == null || data.InEndGame == on)
+        var story = StoryEventManager.Instance;
+        if (story == null || story.InEndGame == on)
         {
             return;
         }
@@ -359,40 +359,51 @@ internal static class AvaLoadout
             MelonLogger.Warning("The game's own end-game animation is playing; the loadout's end game may not take.");
         }
 
-        game.SetIsInEndGame(on);
+        // Only sets the flag: the animation is SurvivalManager's, started by the story's event.
+        story.SetIsInEndGame(on);
         data.EndGameAnimationAmount = on ? 1f : 0f;
-        MelonLogger.Msg(data.InEndGame == on
+        MelonLogger.Msg(story.InEndGame == on
             ? $"End game {(on ? "on" : "off")}."
-            : $"Tried to switch end game {(on ? "on" : "off")}, but it's still {(data.InEndGame ? "on" : "off")}.");
+            : $"Tried to switch end game {(on ? "on" : "off")}, but it's still {(story.InEndGame ? "on" : "off")}.");
+    }
+
+    /// <summary>The story's end-game flag (or summit end), which caps Ava's stats.</summary>
+    private static bool InEndGame
+    {
+        get
+        {
+            var story = StoryEventManager.Instance;
+            return story != null && story.InEndGame;
+        }
     }
 
     /// <summary>
     /// Hunger, thirst and cold to full, or to the end game's cap. RefillStat ignores the cap, so
     /// ModifyStat by nothing then clamps them down to it.
     /// </summary>
-    private static void FillNeeds(GameDataManager data)
+    private static void FillNeeds(SurvivalManager data)
     {
-        var climber = data.GameData == null ? null : data.GameData.climberData;
+        var state = data.survivalState;
         foreach (var stat in Needs)
         {
             data.RefillStat(stat);
-            if (data.InEndGame)
+            if (InEndGame)
             {
-                data.ModifyStat(stat, 0f, 0f, false);
+                data.ModifyStat(stat, 0f, false);
             }
 
-            climber?.EndCriticalStatTimer(stat);
+            state?.EndCriticalStatTimer(stat);
         }
 
-        if (climber != null)
+        if (state != null)
         {
-            climber.EndCriticalStatTimer(SurvivalStat.Hp);
-            climber.EndCriticalStatTimer(SurvivalStat.Exhaustion);
+            state.EndCriticalStatTimer(SurvivalStat.Hp);
+            state.EndCriticalStatTimer(SurvivalStat.Exhaustion);
         }
     }
 
     /// <summary>Health as a percentage of Ava's full health, no higher than the current cap (half in end game).</summary>
-    private static void SetHealth(GameDataManager data, int percent)
+    private static void SetHealth(SurvivalManager data, int percent)
     {
         var hp = Math.Min(data.AbsoluteMaxHp * percent / 100f, data.CurrentMaxHp);
         // At 1 HP or less the next knock kills her, and 0 kills her outright.
@@ -403,14 +414,13 @@ internal static class AvaLoadout
     /// Each hand's fingers to one health: taped is full health (anything above 0.7 shows tape),
     /// bare just under the tape, hurt under the game's hurt threshold. Fingers 0-4 are the left hand.
     /// </summary>
-    private static void SetGrip(GameDataManager data, Grip left, Grip right)
+    private static void SetGrip(SurvivalManager data, Grip left, Grip right)
     {
-        var climber = data.GameData == null ? null : data.GameData.climberData;
-        var fingers = climber == null ? null : climber.fingerHP01;
+        var fingers = data.fingersState == null ? null : data.fingersState.fingerHP01;
         for (var i = 0; fingers != null && i < fingers.Length; i++)
         {
             // Ignore the cooldown after a broken finger, and set the health exactly.
-            climber.SetFingerHealth01(i, FingerHealth(i < FingersPerHand ? left : right), true, false);
+            data.SetFingerHealth01(i, FingerHealth(i < FingersPerHand ? left : right), true, false);
         }
     }
 
@@ -581,7 +591,7 @@ internal static class AvaLoadout
         }
     }
 
-    private static string DescribeStats(GameDataManager data)
+    private static string DescribeStats(SurvivalManager data)
     {
         var parts = new List<string>();
         foreach (var stat in Needs)
@@ -590,15 +600,14 @@ internal static class AvaLoadout
         }
 
         parts.Add($"HP {data.CurrentHp:0.#}/{data.CurrentMaxHp:0.#}");
-        if (data.InEndGame)
+        if (InEndGame)
         {
             parts.Add("end game");
         }
 
-        var climber = data.GameData == null ? null : data.GameData.climberData;
-        if (climber != null)
+        if (data.fingersState != null)
         {
-            parts.Add($"fingers L {climber.GetAverageFingersHealth01PerHand(false):0.##} R {climber.GetAverageFingersHealth01PerHand(true):0.##}");
+            parts.Add($"fingers L {data.GetAverageFingersHealth01PerHand(false):0.##} R {data.GetAverageFingersHealth01PerHand(true):0.##}");
         }
 
         return string.Join(", ", parts);

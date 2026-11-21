@@ -11,7 +11,7 @@ using MelonLoader;
 using MelonLoader.Utils;
 using UnityEngine.InputSystem;
 
-[assembly: MelonInfo(typeof(CairnRouteMaker.RouteMakerMod), "Cairn Route Maker", "0.4.0", "Liam Warfield")]
+[assembly: MelonInfo(typeof(CairnRouteMaker.RouteMakerMod), "Cairn Route Maker", "0.4.1", "Liam Warfield")]
 [assembly: MelonGame("TheGameBakers", "Cairn")]
 
 namespace CairnRouteMaker;
@@ -42,6 +42,7 @@ public sealed class RouteMakerMod : MelonMod
         _attempt = new AttemptTracker(_storage.Bests);
         GameApi.Teleported += placement => _attempt.OnTeleported(placement, _editor?.Route);
         ModControls.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "Controls.json"));
+        FreeClimbSaves.Initialize(Path.Combine(MelonEnvironment.UserDataDirectory, "CairnRouteMaker", "FreeClimbSaves.txt"));
         _session = new FreeClimbSession(_traveler);
         _session.Started += OnFreeClimbStarted;
         _session.Ended += OnFreeClimbEnded;
