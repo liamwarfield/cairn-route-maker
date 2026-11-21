@@ -191,6 +191,7 @@ internal sealed class RouteEditor
         GameApi.StopStreamingAroundCamera();
         GameApi.ReleaseCamera();
         GameApi.BlockGameInput(false);
+        GameApi.HideGameHud(false);
         _camera = null;
         Looking = false;
         IsOpen = false;
@@ -914,7 +915,7 @@ internal sealed class RouteEditor
         }
     }
 
-    /// <summary>Called after the game's own updates so our cursor state wins.</summary>
+    /// <summary>Called after the game's own updates so our cursor state wins, and after this frame's input so the help shows the editor as it is now.</summary>
     public void LateUpdate()
     {
         if (!IsOpen)
@@ -925,6 +926,11 @@ internal sealed class RouteEditor
         var hideCursor = Looking || (Input.UsingGamepad && !LevelSelect.IsOpen);
         Cursor.lockState = Looking ? CursorLockMode.Locked : CursorLockMode.None;
         Cursor.visible = !hideCursor;
+        GameApi.HideGameHud(true);
+        if (!LevelSelect.IsOpen)
+        {
+            ControlsHud.Show(this);
+        }
     }
 
     private void UpdateCamera()
